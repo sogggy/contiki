@@ -1,0 +1,176 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <math.h>
+
+#include "contiki.h"
+#include "sys/rtimer.h"
+#include "buzzer.h"
+
+#include "board-peripherals.h"
+
+PROCESS(process_buzz, "Process Buzz");
+AUTOSTART_PROCESSES(&process_buzz);
+
+// static int counter_rtimer;
+static struct rtimer rt;
+static rtimer_clock_t imu_timeout_rtimer = RTIMER_SECOND * 0.05;
+static rtimer_clock_t light_timeout_rtimer = RTIMER_SECOND * 0.25;
+
+static struct etimer et;
+static int buzzerFrequency = 2000;
+static int buzzCount = 0;
+
+// flags
+static int motion_flag = 0;
+static int light_flag = 0;
+static int light_prev = -1;
+static int should_buzz = 1;
+
+// one process, timer driven
+// have a flag, infinite loop until flag returns true. timer
+// to poll every 100ms for motion
+
+static void init_opt_reading(void);
+static int has_significant_light(void);
+
+static void print_mpu_reading(long reading) {
+  if(reading < 0) {
+    printf("-");
+    reading = -reading;
+  }
+
+  printf("%ld.%02ld", reading / 100, reading % 100);
+}
+
+static void init_mpu_reading(void) {
+  mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL);
+}
+
+static void
+init_opt_reading(void)
+{
+  SENSORS_ACTIVATE(opt_3001_sensor);
+}
+
+// int has_significant_motion(motion_manager *prev_motion, motion_manager *curr_motion) {
+static int has_significant_motion() {
+  // TODO: compare previous value with current value
+  init_mpu_reading();
+  int acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z;
+  gyro_x = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_GYRO_X);
+  gyro_y = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_GYRO_Y);
+  gyro_z = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_GYRO_Z);
+  acc_x = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_X);
+  acc_y = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Y);
+  acc_z = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Z);
+
+  long acc_squared = (long) (acc_x * acc_x) + (acc_y * acc_y) + (acc_z * acc_z);
+  double acc = sqrt((double) acc_squared);
+  // printf("Acceleration: ");
+  // print_mpu_reading((long) acc);
+  // printf("\n");
+
+  long gyro_squared = (long) (gyro_x * gyro_x) + (gyro_y * gyro_y) + (gyro_z * gyro_z);
+  double gyro = sqrt((double) gyro_squared);
+  // printf("Gyro: ");
+  // print_mpu_reading((long) gyro);
+  // printf("\n");
+  
+  //TODO: Calibrate this
+  return acc > 250.0 || gyro > 35000.0;
+}
+
+static int has_significant_light() {
+  int value;
+  value = opt_3001_sensor.value(0);
+  int res = 0;
+  if (value != CC26XX_SENSOR_READING_ERROR) {
+    // printf("OPT: Light=%d.%02d lux\n", value / 100, value % 100);
+    int lux = value / 100;
+    if (light_prev == -1) {
+      light_prev = lux;
+      return 0;
+    }
+    
+    // printf("lux: %d\n", lux);
+    // printf("light_prev: %d\n", light_prev);
+    int difference = abs(lux - light_prev);
+    // printf("Light difference: %d\n", difference);
+    if (difference >= 300) {
+      light_prev = -1;
+      res = 1;
+    } else {
+      light_prev = lux;
+      res = 0;
+    }
+  } else {
+    // printf("OPT: Light Sensor's Warming Up\n\n");
+    res = 0;
+  }
+  init_opt_reading();
+  return res;
+}
+
+void do_imu_rtimer_timeout(struct rtimer *timer, void *ptr) {
+  if (has_significant_motion()) {
+    motion_flag = 1;
+  } else {
+    rtimer_set(&rt, RTIMER_NOW() + imu_timeout_rtimer, 0, do_imu_rtimer_timeout, NULL);
+  }
+}
+
+void do_light_rtimer_timeout(struct rtimer* timer, void *ptr) {
+  if (has_significant_light()) {
+    light_flag = 1;
+  } else {
+    rtimer_set(&rt, RTIMER_NOW() + light_timeout_rtimer, 0, do_light_rtimer_timeout, NULL);
+  }
+}
+
+void do_etimer_timeout() {
+  if (should_buzz) {
+    buzzer_start(buzzerFrequency);
+  } else {
+    buzzer_stop();
+  }
+
+  should_buzz = should_buzz == 1 ? 0 : 1;
+}
+
+PROCESS_THREAD(process_buzz, ev, data) {
+  PROCESS_BEGIN();
+  motion_flag = 0;
+  light_flag = 0;
+  should_buzz = 0;
+  light_prev = -1;
+  buzzer_init();
+
+  while(1) {
+    printf("Buzzer in idle state\n");
+    init_mpu_reading();
+    while(!motion_flag) {
+      rtimer_set(&rt, RTIMER_NOW() + imu_timeout_rtimer, 0,  do_imu_rtimer_timeout, NULL);
+      PROCESS_YIELD();
+    }
+    SENSORS_DEACTIVATE(mpu_9250_sensor);
+    motion_flag = 0;
+
+    init_opt_reading();
+    printf("Buzzer in buzzing state\n");
+    should_buzz = 1;
+    while (!light_flag) {
+      rtimer_set(&rt, RTIMER_NOW() + light_timeout_rtimer, 0,  do_light_rtimer_timeout, NULL);
+      do_etimer_timeout();
+      etimer_set(&et, 3 * CLOCK_SECOND);
+      PROCESS_WAIT_UNTIL(ev == PROCESS_EVENT_TIMER);
+      rtimer_set(&rt, RTIMER_NOW() + light_timeout_rtimer, 0,  do_light_rtimer_timeout, NULL);
+      PROCESS_YIELD();
+    }
+    buzzer_stop();
+    motion_flag = 0;
+    light_flag = 0;
+    should_buzz = 0;
+    light_prev = -1;
+  }
+  PROCESS_END();
+}
