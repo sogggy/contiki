@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <stdint.h>
-#include <math.h>
 
 #include "contiki.h"
 #include "sys/rtimer.h"
@@ -12,6 +11,10 @@ PROCESS(process_buzz, "Process Buzz");
 AUTOSTART_PROCESSES(&process_buzz);
 
 #define MAX_BUZZ_COUNT 12
+#define MIN_ACC 200
+#define MIN_GYRO 18000
+#define MIN_ACC_SQUARED MIN_ACC * MIN_ACC
+#define MIN_GYRO_SQUARED MIN_GYRO * MIN_GYRO
 
 // static int counter_rtimer;
 static struct rtimer rt;
@@ -31,22 +34,20 @@ static int should_buzz = 1;
 static void init_opt_reading(void);
 static int has_significant_light(void);
 
-static void print_mpu_reading(long reading) {
+static void print_mpu_reading(int reading) {
   if(reading < 0) {
     printf("-");
     reading = -reading;
   }
 
-  printf("%ld.%02ld", reading / 100, reading % 100);
+  printf("%d.%02d", reading / 100, reading % 100);
 }
 
 static void init_mpu_reading(void) {
   mpu_9250_sensor.configure(SENSORS_ACTIVE, MPU_9250_SENSOR_TYPE_ALL);
 }
 
-static void
-init_opt_reading(void)
-{
+static void init_opt_reading(void) {
   SENSORS_ACTIVATE(opt_3001_sensor);
 }
 
@@ -60,20 +61,18 @@ static int has_significant_motion() {
   acc_y = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Y);
   acc_z = mpu_9250_sensor.value(MPU_9250_SENSOR_TYPE_ACC_Z);
 
-  long acc_squared = (long) (acc_x * acc_x) + (acc_y * acc_y) + (acc_z * acc_z);
-  double acc = sqrt((double) acc_squared);
-  // printf("Acceleration: ");
-  // print_mpu_reading((long) acc);
+  int acc_squared = (acc_x * acc_x) + (acc_y * acc_y) + (acc_z * acc_z);
+  int gyro_squared = (gyro_x * gyro_x) + (gyro_y * gyro_y) + (gyro_z * gyro_z);
+
+  // printf("Acc squared: ");
+  // print_mpu_reading(acc_squared);
   // printf("\n");
 
-  long gyro_squared = (long) (gyro_x * gyro_x) + (gyro_y * gyro_y) + (gyro_z * gyro_z);
-  double gyro = sqrt((double) gyro_squared);
-  // printf("Gyro: ");
-  // print_mpu_reading((long) gyro);
+  // printf("Gyro squared: ");
+  // print_mpu_reading(gyro_squared);
   // printf("\n");
   
-  //TODO: Calibrate this
-  return acc > 250.0 || gyro > 35000.0;
+  return acc_squared > MIN_ACC_SQUARED || gyro_squared > MIN_GYRO_SQUARED;
 }
 
 static int has_significant_light() {
@@ -165,7 +164,7 @@ PROCESS_THREAD(process_buzz, ev, data) {
     motion_flag = 0;
 
     init_opt_reading();
-    printf("Buzzer in buzzing state\n");
+    printf("Buzzer in active state\n");
     should_buzz = 1;
     while (!light_flag) {
       rtimer_set(&rt, RTIMER_NOW() + light_timeout_rtimer, 0,  do_light_rtimer_timeout, NULL);
