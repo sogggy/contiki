@@ -88,7 +88,6 @@ static int has_significant_light() {
     }
     
     int difference = abs(lux - light_prev);
-    // printf("lux: %d\n", lux);
     // printf("light_prev: %d\n", light_prev);
     // printf("Light difference: %d\n", difference);
     if (difference >= 300) {
@@ -156,8 +155,8 @@ PROCESS_THREAD(process_buzz, ev, data) {
   while(1) {
     printf("Buzzer in idle state\n");
     init_mpu_reading();
+    rtimer_set(&rt, RTIMER_NOW() + imu_timeout_rtimer, 0,  do_imu_rtimer_timeout, NULL);
     while(!motion_flag) {
-      rtimer_set(&rt, RTIMER_NOW() + imu_timeout_rtimer, 0,  do_imu_rtimer_timeout, NULL);
       PROCESS_YIELD();
     }
     SENSORS_DEACTIVATE(mpu_9250_sensor);
@@ -166,12 +165,11 @@ PROCESS_THREAD(process_buzz, ev, data) {
     init_opt_reading();
     printf("Buzzer in active state\n");
     should_buzz = 1;
+    rtimer_set(&rt, RTIMER_NOW() + light_timeout_rtimer, 0,  do_light_rtimer_timeout, NULL);
     while (!light_flag) {
-      rtimer_set(&rt, RTIMER_NOW() + light_timeout_rtimer, 0,  do_light_rtimer_timeout, NULL);
       do_etimer_timeout();
       etimer_set(&et, 0.25 * CLOCK_SECOND);
       PROCESS_WAIT_UNTIL(ev == PROCESS_EVENT_TIMER);
-      rtimer_set(&rt, RTIMER_NOW() + light_timeout_rtimer, 0,  do_light_rtimer_timeout, NULL);
       PROCESS_YIELD();
     }
     if (should_buzz) {
