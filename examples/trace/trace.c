@@ -18,6 +18,10 @@
 #include "powertrace.h"
 #endif
 
+void *calloc (size_t nm, size_t es){
+  return malloc(nm*es);
+}
+
 typedef struct ht ht;
 static void* ht_get(ht* table, const unsigned long key);
 static const unsigned long ht_set(ht* table, const unsigned long key, void* value);
@@ -47,7 +51,8 @@ static ht* ht_create(void) {
 
   // Allocate (zero'd) space for entry buckets.
   table->entries = calloc(table->capacity, sizeof(ht_entry));
-  for (int i = 0; i < table->capacity; i++) {
+  static int i = 0;
+  for (i = 0; i < table->capacity; i++) {
     table->entries[i].key = -1;
   }
 
@@ -126,7 +131,8 @@ static bool ht_expand(ht* table) {
   }
 
   // Iterate entries, move all non-empty ones to new table's entries.
-  for (size_t i = 0; i < table->capacity; i++) {
+  static int i = 0;
+  for (i = 0; i < table->capacity; i++) {
     ht_entry entry = table->entries[i];
     if (entry.key != -1) {
       ht_set_entry(new_entries, new_capacity, entry.key,
@@ -160,7 +166,8 @@ static const unsigned long ht_set(ht* table, const unsigned long key, void* valu
 }
 
 static void ht_delete(ht *table, unsigned long key) {
-  for (size_t i = 0; i < table->capacity; i++) {
+  static int i = 0;
+  for (i = 0; i < table->capacity; i++) {
     if (table->entries[i].key == key) {
       free((void *) table->entries[i].value);
       return ;
@@ -223,9 +230,10 @@ static bool is_active(int slot) {
 
 static void insert_into_timetable(ht *time_table, long key, void *value) {
   node *n = (node *)value;
+  static int i = 0;
   if (ht_get(time_table, key) == NULL) {
     node *nodes[INITIAL_CAPACITY];
-    for (int i = 0; i < INITIAL_CAPACITY; i++) {
+    for (i = 0; i < INITIAL_CAPACITY; i++) {
       nodes[i] = NULL;
     }
     node **nodes_ptr = nodes;
@@ -236,9 +244,10 @@ static void insert_into_timetable(ht *time_table, long key, void *value) {
 
   //pointer to array of pointers - how do i cast properly
   node **nodes = ((node **)ht_get(time_table, key));
-  for (int i = 0; i < INITIAL_CAPACITY; i++) {
-    if (nodes[i] == NULL) {
-      nodes[i] = n;
+  static int j = 0;
+  for (j = 0; j < INITIAL_CAPACITY; j++) {
+    if (nodes[j] == NULL) {
+      nodes[j] = n;
       return ;
     }
   }
