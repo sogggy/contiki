@@ -98,8 +98,8 @@ create(hts_t *ht)
     }
 
     hash_map1[i]->tuple_id = INVALID_TUPLE;
-    hash_map2[i]->tuple_id = INVALID_TUPLE;
     hash_map1[i]->value = NULL;
+    hash_map2[i]->tuple_id = INVALID_TUPLE;
     hash_map2[i]->value = NULL;
   }
 
@@ -130,16 +130,17 @@ insert(hash_map_t *hash_map, void *value, long tuple_id)
                 hash_map[hash_value]->tuple_id == tuple_id) {
     hash_map[hash_value]->tuple_id = tuple_id;
     hash_map[hash_value]->value = value;
+    return;
   }
   
   //linearly probe for slots.
-  int i;
-  while (hash_map[hash_value]->tuple_id !== INVALID_TUPLE && i < INITIAL_CAPACITY) {
+  int i = 0;
+  while (hash_map[hash_value]->tuple_id != INVALID_TUPLE && i < INITIAL_CAPACITY) {
     hash_value = (hash_value + 1) % INITIAL_CAPACITY;
     i++;
   }
 
-  if (hash_map[hash_value]->tuple_id !== INVALID_TUPLE) {
+  if (hash_map[hash_value]->tuple_id != INVALID_TUPLE) {
     printf("Hashmap is full. Insertion failed. \n");
     return;
   }
@@ -159,15 +160,15 @@ get(hash_map_t *hash_map, long tuple_id)
   }
 
   //linearly probe
-  int i;
-  while (hash_map[hash_value]->tuple_id !== tuple_id && i < INITIAL_CAPACITY) {
+  int i = 0;
+  while (hash_map[hash_value]->tuple_id != tuple_id && i < INITIAL_CAPACITY) {
     hash_value = (hash_value + 1) % INITIAL_CAPACITY;
     i++;
   }
 
-  if (hash_map[hash_value]->tuple_id !== tuple_id) {
+  if (hash_map[hash_value]->tuple_id != tuple_id) {
     printf("Key %lu not found in Hashmap. Get failed. \n", tuple_id);
-    return;
+    return NULL;
   }
 
   return hash_map[hash_value]->value;
@@ -185,14 +186,15 @@ delete(hash_map_t *hash_map, long tuple_id)
   }
 
   //linearly probe
-  int i;
-  while (hash_map[hash_value]->tuple_id !== tuple_id && i < INITIAL_CAPACITY) {
+  int i = 0;
+  while (hash_map[hash_value]->tuple_id != tuple_id && i < INITIAL_CAPACITY) {
     hash_value = (hash_value + 1) % INITIAL_CAPACITY;
-    i++;
+    i = i + 1;
   }
 
-  if (hash_map[hash_value] !== tuple_id) {
+  if (hash_map[hash_value]->tuple_id != tuple_id) {
     printf("Key %lu not found in Hashmap. Delete failed. \n", tuple_id);
+    return;
   }
 
   hash_map[hash_value]->tuple_id = INVALID_TUPLE;
@@ -335,25 +337,6 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
   printf("CC2650 neighbour discovery\n");
   printf("Node %d will be sending packet of size %d Bytes\n", node_id, (int)sizeof(data_packet_struct));
 
-  char* test = "test1";
-  insert(ht->id_table, (void *)test, (long) 5);
-  char* val = get(ht->id_table, (long) 5);
-  printf("Value is:  %s\n", val);
-
-  char* test = "test2";
-  insert(ht->id_table, (void *)test, (long) 13);
-  char* val = get(ht->id_table, (long) 13);
-  printf("Value is:  %s\n", val);
-
-  char* test = "test3";
-  insert(ht->id_table, (void *)test, (long) 21);
-  char* val = get(ht->id_table, (long) 21);
-
-  delete(ht->id_table, (long) 5);
-  printf("Value is %s\n", (char*) get(ht->id_table, (long) 5));
-  delete(ht->id_table, (long) 13);
-  printf("Value is %s\n", (char*) get(ht->id_table, (long) 13));
-
   // radio off
   NETSTACK_RADIO.off();
 
@@ -373,6 +356,25 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   ht = memb_alloc(&ht_memb);
   create(ht);
+
+  char* test1 = "test1";
+  insert(ht->id_table, (void *)test1, (long) 5);
+  char* val = get(ht->id_table, (long) 5);
+  printf("Value1 is:  %s\n", val);
+
+  char* test2 = "test2";
+  insert(ht->id_table, (void *)test2, (long) 13);
+  val = get(ht->id_table, (long) 13);
+  printf("Value2 is:  %s\n", val);
+
+  char* test3 = "test3";
+  insert(ht->id_table, (void *)test3, (long) 21);
+  val = get(ht->id_table, (long) 21);
+
+  delete(ht->id_table, (long) 5);
+  printf("Value is %s\n", (char*) get(ht->id_table, (long) 5));
+  delete(ht->id_table, (long) 13);
+  printf("Value is %s\n", (char*) get(ht->id_table, (long) 13));
 
   // Start sender in one millisecond.
   rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1, (rtimer_callback_t)sender_scheduler, NULL);
