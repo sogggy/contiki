@@ -216,23 +216,21 @@ static node_t *get_new_node(hts_t *hts) {
 }
 
 static void reset_node_state(node_t *node) {
-  node->is_absent = false;
+  node->is_absent = true;
   node->last_seen_timing = INVALID_TUPLE;
   node->new_state_first_timing = INVALID_TUPLE;
 }
 
-static void upgrade_node_state(node_t *node, bool is_absent, long received_time) {
+static void upgrade_node_state(node_t *node, long last_seen_timing) {
   //upgrade to present - is_absent is false
-  n->is_absent = is_absent;
-  n->last_seen_timing = received_time;
-  
-  // if eventually this node is not found, then update this value
-  n->new_state_first_timing = INVALID_TUPLE; 
+  node->is_absent = false;
+  node->last_seen_timing = last_seen_timing;
+  node->new_state_first_timing = INVALID_TUPLE; 
 }
 
 /*---------------------------------------------------------------------------*/
 // Try lowering period?
-#define SLOT_TIME RTIMER_SECOND/80    // 10 HZ, 0.1s
+#define SLOT_TIME RTIMER_SECOND/80    // 80 HZ, 0.0125s
 #define SLOT_DIM 8
 /*---------------------------------------------------------------------------*/
 // sender timer
@@ -242,6 +240,7 @@ static struct pt pt;
 static data_packet_struct received_packet;
 static data_packet_struct data_packet;
 unsigned long curr_timestamp;
+unsigned long curr_timestamp_seconds;
 
 static int row;
 static int col;
@@ -284,13 +283,13 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
       n = new_node;
       insert(hts->id_table, (void *)n, sender_id);
     }
-    print_node(n);
+    // print_node(n);
     n->last_seen_timing = received_time;
 
     //bypass nodes that were already detected and still present
     if (n->new_state_first_timing != -1 && received_time - n->new_state_first_timing >= DETECT_SECONDS) {
-      upgrade_node_state(n, false, received_time);
-      printf("%ld DETECT %lu", n->new_state_first_timing / CLOCK_SECOND, received_packet.src_id);
+      upgrade_node_state(n, received_time);
+      printf("%ld DETECT %lu\n", n->new_state_first_timing, n->id);
     }
   }
 
@@ -305,22 +304,40 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
   PT_BEGIN(&pt);
 
   curr_timestamp = clock_time(); 
+  curr_timestamp_seconds = curr_timestamp / CLOCK_SECOND;
   printf("Start clock %lu ticks, timestamp %3lu.%03lu\n", curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
   while(1) {
-    
+    // half the time, do above checks
+    if (slot % ((SLOT_DIM * SLOT_DIM) / 2) == 0) {
+      int j;
+      for (j = 0; j < MAX_NODES; j++) {
+        if (hts->node_arr[j]->id == INVALID_TUPLE) {
+          continue;
+        }
+
+        node_t *node = hts->node_arr[j];
+
+        if (node->is_absent &&
+            node->last_seen_timing != INVALID_TUPLE && 
+            curr_timestamp_seconds - node->last_seen_timing >= 1) {
+              // for nodes that were seen before and still considered absent, 
+              // if the current time is more than the last_seen_timing by more than 1 second, 
+              // we reset that node's state.
+              reset_node_state(node);
+        } else if (!node->is_absent && curr_timestamp_seconds - node->last_seen_timing >= ABSENT_SECONDS) {
+          // for nodes that are already considered present
+          // and the current time is more than last_seen_timing by more than 30 seconds,
+          // declare that it is absent and upgrade node to absent.
+          printf("%ld ABSENT %lu\n", node->last_seen_timing, node->id);
+          reset_node_state(node);
+        }
+      }
+    }
 
     if (is_active(slot)) {
       // radio on  
       NETSTACK_RADIO.on();
-   
-      // for nodes that were seen before and still considered absent, 
-      // if the current time is more than the last_seen_timing by more than 1 second, 
-      // we reset that node's state.
-
-      // for nodes that are already considered present
-      // and the current time is more than last_seen_timing by more than 30 seconds,
-      // declare that it is absent and upgrade node to absent.
 
       for (i = 0; i < NUM_SEND; i++) {
         leds_on(LEDS_RED);
