@@ -30,12 +30,6 @@ struct hash_item {
 typedef struct hash_item hash_item_t;
 typedef hash_item_t hash_map_t[INITIAL_CAPACITY];
 
-struct hts {
-  hash_map_t *id_table;
-  hash_map_t *time_table;
-};
-typedef struct hts hts_t;
-
 struct node {
   long id;
   bool is_absent;
@@ -44,6 +38,14 @@ struct node {
 };
 typedef struct node node_t;
 typedef node_t node_arr_t[MAX_NODES]; //map timing of 2,3,4s... to node array in time_table
+
+struct hts {
+  hash_map_t *id_table;
+  hash_map_t *time_table;
+  node_arr_t *node_arr;
+};
+typedef struct hts hts_t;
+
 
 static void create(hts_t *ht);
 static void destroy(hts_t *ht);
@@ -56,7 +58,15 @@ MEMB(id_table_memb, hash_map_t, 1);
 MEMB(time_table_memb, hash_map_t, 1);
 
 hts_t *ht;
-node_arr_t *node_arr;
+
+static void print_node(node_t *n) {
+  if (n == NULL) {
+    printf("n is NULL\n");
+    return;
+  }
+
+  printf("n id is %lu, is_absent: %d, new_state_first_timing: %lu, last_seen_timing: %lu\n", n->id, n->is_absent, n->new_state_first_timing, n->last_seen_timing);
+}
 
 static unsigned calculate_hash(long value) {
   return (uint16_t) (value % INITIAL_CAPACITY);
@@ -68,17 +78,27 @@ create(hts_t *ht)
   int i;
   hash_map_t *hash_map1;
   hash_map_t *hash_map2;
+  node_arr_t *node_arr;
 
-  printf("Creating hash maps\n");
+  printf("Creating hash maps and node array\n");
 
   hash_map1 = memb_alloc(&id_table_memb);
   hash_map2 = memb_alloc(&time_table_memb);
+  node_arr = memb_alloc(&node_arr_memb);
 
-  if(hash_map1 == NULL || hash_map2 == NULL) {
-    printf("Error creating hash maps 1 or 2. \n");
+  if(hash_map1 == NULL || hash_map2 == NULL || node_arr == NULL) {
+    printf("Error creating hash maps or node array. \n");
   }
 
   for(i = 0; i < INITIAL_CAPACITY; i++) {
+    if (i < MAX_NODES) {
+      node_arr[i]->id = i;
+      node_arr[i]->is_absent = true;
+      node_arr[i]->last_seen_timing = -1;
+      node_arr[i]->new_state_first_timing = -1;
+      print_node(node_arr[i]);
+    }
+
     hash_map1[i]->tuple_id = INVALID_TUPLE;
     hash_map2[i]->tuple_id = INVALID_TUPLE;
     hash_map1[i]->value = NULL;
@@ -87,6 +107,7 @@ create(hts_t *ht)
 
   ht->id_table = hash_map1;
   ht->time_table = hash_map2;
+  ht->node_arr = node_arr;
 
   return ;
 }
@@ -168,15 +189,6 @@ AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 
 static bool is_active(int slot) {
   return slot % P1 == 0 || slot % P2 == 0;
-}
-
-static void print_node(node_t *n) {
-  if (n == NULL) {
-    printf("n is NULL\n");
-    return;
-  }
-
-  printf("n id is %lu, is_absent: %d, new_state_first_timing: %lu, last_seen_timing: %lu\n", n->id, n->is_absent, n->new_state_first_timing, n->last_seen_timing);
 }
 
 static void
@@ -286,16 +298,6 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   ht = memb_alloc(&ht_memb);
   create(ht);
-  node_arr = memb_alloc(&node_arr_memb);
-
-  int i = 0;
-  for (i = 0; i < MAX_NODES; i++) {
-    node_arr[i]->id = i;
-    node_arr[i]->is_absent = true;
-    node_arr[i]->last_seen_timing = -1;
-    node_arr[i]->new_state_first_timing = -1;
-    print_node(node_arr[i]);
-  }
 
   // char* test = "test";
   // insert(ht->id_table, (void *)test, (long) 5);
