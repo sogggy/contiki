@@ -21,6 +21,7 @@
 
 #define INITIAL_CAPACITY 16
 #define INVALID_TUPLE	(long)-1
+#define MAX_NODES 8
 
 struct hash_item {
   long tuple_id;
@@ -35,10 +36,27 @@ struct hts {
 };
 typedef struct hts hts_t;
 
+struct node {
+  long id;
+  bool is_absent;
+  long new_state_first_timing;
+  long last_seen_timing;
+};
+typedef struct node node_t;
+typedef node_t node_arr_t[MAX_NODES]; //map timing of 2,3,4s... to node array in time_table
+
 static void create(hts_t *ht);
 static void destroy(hts_t *ht);
 static void insert(hash_map_t *hash_map, void *, long);
 static void delete(hash_map_t *hash_map, long);
+
+MEMB(ht_memb, hts_t, 1);
+MEMB(node_arr_memb, node_arr_t, 1);
+MEMB(id_table_memb, hash_map_t, 1);
+MEMB(time_table_memb, hash_map_t, 1);
+
+hts_t *ht;
+node_arr_t *node_arr;
 
 static unsigned calculate_hash(long value) {
   return (uint16_t) (value % INITIAL_CAPACITY);
@@ -144,29 +162,20 @@ PROCESS(cc2650_nbr_discovery_process, "cc2650 neighbour discovery process");
 AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 /*---------------------------------------------------------------------------*/
 
-struct node {
-  long id;
-  bool is_absent;
-  long new_state_first_timing;
-  long last_seen_timing;
-};
-typedef struct node node_t;
-
 #define DETECT_SECONDS 15
 #define ABSENT_SECONDS 30
 #define RSSI_THRESHOLD -65 //less than means present, more than is absent
-
-MEMB(ht_memb, hts_t, 1);
-MEMB(id_table_memb, hash_map_t, 1);
-MEMB(time_table_memb, hash_map_t, 1);
-
-hts_t *ht;
 
 static bool is_active(int slot) {
   return slot % P1 == 0 || slot % P2 == 0;
 }
 
 static void print_node(node_t *n) {
+  if (n == NULL) {
+    printf("n is NULL\n");
+    return;
+  }
+
   printf("n id is %lu, is_absent: %d, new_state_first_timing: %lu, last_seen_timing: %lu\n", n->id, n->is_absent, n->new_state_first_timing, n->last_seen_timing);
 }
 
@@ -181,17 +190,17 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
   // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  node_t *n = (node_t *) get(ht->id_table, sender_id);
-  printf("n before is %s\n", n);
-  if (n == NULL) {
-    node_t *new_node = (node_t *)malloc(sizeof(node_t));
-    n->id = received_packet.src_id;
-    n->new_state_first_timing = -1;
-    n->last_seen_timing = -1;
-    n->is_absent = true;
-    n = new_node;
-  }
-  print_node(n);
+  // node_t *n = (node_t *) get(ht->id_table, sender_id);
+  // print_node(n);
+  // if (n == NULL) {
+  //   node_t *new_node = (node_t *)malloc(sizeof(node_t));
+  //   new_node->id = received_packet.src_id;
+  //   new_node->new_state_first_timing = -1;
+  //   new_node->last_seen_timing = -1;
+  //   new_node->is_absent = true;
+  //   n = new_node;
+  // }
+  // print_node(n);
 
   leds_off(LEDS_GREEN);
 }
@@ -273,9 +282,20 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
   memb_init(&ht_memb);
   memb_init(&id_table_memb);
   memb_init(&time_table_memb);
+  memb_init(&node_arr_memb);
 
   ht = memb_alloc(&ht_memb);
   create(ht);
+  node_arr = memb_alloc(&node_arr_memb);
+
+  int i = 0;
+  for (i = 0; i < MAX_NODES; i++) {
+    node_arr[i]->id = i;
+    node_arr[i]->is_absent = true;
+    node_arr[i]->last_seen_timing = -1;
+    node_arr[i]->new_state_first_timing = -1;
+    print_node(node_arr[i]);
+  }
 
   // char* test = "test";
   // insert(ht->id_table, (void *)test, (long) 5);
