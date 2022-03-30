@@ -40,10 +40,6 @@ static void destroy(hts_t *ht);
 static void insert(hash_map_t *hash_map, void *, long);
 static void delete(hash_map_t *hash_map, long);
 
-MEMB(ht_memb, hts_t, 1);
-MEMB(id_table_memb, hash_map_t, 1);
-MEMB(time_table_memb, hash_map_t, 1);
-
 static unsigned calculate_hash(long value) {
   return (uint16_t) (value % INITIAL_CAPACITY);
 }
@@ -140,7 +136,7 @@ static data_packet_struct received_packet;
 static data_packet_struct data_packet;
 unsigned long curr_timestamp;
 
-unsigned long current_time;
+unsigned long received_time;
 unsigned long sender_id;
 
 /*---------------------------------------------------------------------------*/
@@ -160,8 +156,18 @@ typedef struct node node_t;
 #define ABSENT_SECONDS 30
 #define RSSI_THRESHOLD -65 //less than means present, more than is absent
 
+MEMB(ht_memb, hts_t, 1);
+MEMB(id_table_memb, hash_map_t, 1);
+MEMB(time_table_memb, hash_map_t, 1);
+
+hts_t *ht;
+
 static bool is_active(int slot) {
   return slot % P1 == 0 || slot % P2 == 0;
+}
+
+static void print_node(node_t *n) {
+  printf("n id is %lu, is_absent: %d, new_state_first_timing: %lu, last_seen_timing: %lu\n", n->id, n->is_absent, n->new_state_first_timing, n->last_seen_timing);
 }
 
 static void
@@ -169,14 +175,24 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
 {
   leds_on(LEDS_GREEN);
   memcpy(&received_packet, packetbuf_dataptr(), sizeof(data_packet_struct));
-  current_time = clock_time();
+  received_time = received_packet.timestamp;
   sender_id = received_packet.src_id;
   signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  printf("RSSI is %d, current_time is %lu, sender_id is %lu\n", rssi, current_time, sender_id);
+  // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
+  printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
+  node_t *n = (node_t *) get(ht->id_table, sender_id);
+  printf("n before is %s\n", n);
+  if (n == NULL) {
+    node_t *new_node = (node_t *)malloc(sizeof(node_t));
+    n->id = received_packet.src_id;
+    n->new_state_first_timing = -1;
+    n->last_seen_timing = -1;
+    n->is_absent = true;
+    n = new_node;
+  }
+  print_node(n);
 
-  printf("Received packet from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   leds_off(LEDS_GREEN);
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
@@ -253,7 +269,6 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   printf("CC2650 neighbour discovery\n");
   printf("Node %d will be sending packet of size %d Bytes\n", node_id, (int)sizeof(data_packet_struct));
-  hts_t *ht;
 
   memb_init(&ht_memb);
   memb_init(&id_table_memb);
