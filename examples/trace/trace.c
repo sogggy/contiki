@@ -215,6 +215,21 @@ static node_t *get_new_node(hts_t *hts) {
   return hts->node_arr[next_new_node];
 }
 
+static void reset_node_state(node_t *node) {
+  node->is_absent = false;
+  node->last_seen_timing = INVALID_TUPLE;
+  node->new_state_first_timing = INVALID_TUPLE;
+}
+
+static void upgrade_node_state(node_t *node, bool is_absent, long received_time) {
+  //upgrade to present - is_absent is false
+  n->is_absent = is_absent;
+  n->last_seen_timing = received_time;
+  
+  // if eventually this node is not found, then update this value
+  n->new_state_first_timing = INVALID_TUPLE; 
+}
+
 /*---------------------------------------------------------------------------*/
 // Try lowering period?
 #define SLOT_TIME RTIMER_SECOND/80    // 10 HZ, 0.1s
@@ -251,14 +266,15 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
 {
   leds_on(LEDS_GREEN);
   memcpy(&received_packet, packetbuf_dataptr(), sizeof(data_packet_struct));
-  received_time = received_packet.timestamp;
+  received_time = clock_time() / CLOCK_SECOND;
   sender_id = received_packet.src_id;
   signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
   // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  if (rssi <= RSSI_THRESHOLD) {
+  if (rssi >= RSSI_THRESHOLD) {
     node_t *n = (node_t *) get(hts->id_table, sender_id);
+
     if (n == NULL) {
       node_t *new_node = get_new_node(hts);
       new_node->id = received_packet.src_id;
@@ -271,10 +287,9 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
     print_node(n);
     n->last_seen_timing = received_time;
 
-    if ((received_time / CLOCK_SECOND) - (n->new_state_first_timing / CLOCK_SECOND) >= DETECT_SECONDS) {
-      n->is_absent = false;
-      n->last_seen_timing = received_time;
-      n->new_state_first_timing = INVALID_TUPLE; // if eventually this node is not found, then update this value
+    //bypass nodes that were already detected and still present
+    if (n->new_state_first_timing != -1 && received_time - n->new_state_first_timing >= DETECT_SECONDS) {
+      upgrade_node_state(n, false, received_time);
       printf("%ld DETECT %lu", n->new_state_first_timing / CLOCK_SECOND, received_packet.src_id);
     }
   }
@@ -299,6 +314,13 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
       // radio on  
       NETSTACK_RADIO.on();
    
+      // for nodes that were seen before and still considered absent, 
+      // if the current time is more than the last_seen_timing by more than 1 second, 
+      // we reset that node's state.
+
+      // for nodes that are already considered present
+      // and the current time is more than last_seen_timing by more than 30 seconds,
+      // declare that it is absent and upgrade node to absent.
 
       for (i = 0; i < NUM_SEND; i++) {
         leds_on(LEDS_RED);
