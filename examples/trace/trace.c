@@ -43,20 +43,21 @@ struct hts {
   hash_map_t *id_table;
   hash_map_t *time_table;
   node_arr_t *node_arr;
+  int next_new_node;
 };
 typedef struct hts hts_t;
 
-static void create(hts_t *ht);
-static void destroy(hts_t *ht);
+static void create(hts_t *hts);
+static void destroy(hts_t *hts);
 static void insert(hash_map_t *hash_map, void *, long);
 static void delete(hash_map_t *hash_map, long);
 
-MEMB(ht_memb, hts_t, 1);
+MEMB(hts_memb, hts_t, 1);
 MEMB(id_table_memb, hash_map_t, 1);
 MEMB(time_table_memb, hash_map_t, 1);
 MEMB(node_arr_memb, node_arr_t, 1);
 
-hts_t *ht;
+hts_t *hts;
 
 static void print_node(node_t *n) {
   if (n == NULL) {
@@ -72,7 +73,7 @@ static unsigned calculate_hash(long value) {
 }
 
 static void
-create(hts_t *ht)
+create(hts_t *hts)
 {
   int i;
   hash_map_t *hash_map1;
@@ -103,21 +104,23 @@ create(hts_t *ht)
     hash_map2[i]->value = NULL;
   }
 
-  ht->id_table = hash_map1;
-  ht->time_table = hash_map2;
-  ht->node_arr = node_arr;
+  // create nodes for the hashmap beforehand
+  hts->id_table = hash_map1;
+  hts->time_table = hash_map2;
+  hts->node_arr = node_arr;
+  hts->next_new_node = 0;
 
   return ;
 }
 
 static void
-destroy(hts_t *ht)
+destroy(hts_t *hts)
 {
   // didnt auto fill here
-  memb_free(&id_table_memb, ht->id_table);
-  memb_free(&time_table_memb, ht->time_table);
-  memb_free(&node_arr_memb, ht->node_arr);
-  memb_free(&ht_memb, ht);
+  memb_free(&id_table_memb, hts->id_table);
+  memb_free(&time_table_memb, hts->time_table);
+  memb_free(&node_arr_memb, hts->node_arr);
+  memb_free(&hts_memb, hts);
   return ;
 }
 
@@ -201,6 +204,17 @@ delete(hash_map_t *hash_map, long tuple_id)
   hash_map[hash_value]->value = NULL;
 }
 
+static node_t *get_new_node(hts_t *hts) {
+  int next_new_node = hts->next_new_node;
+  if (next_new_node >= MAX_NODES) {
+    printf("Cannot hold anymore new nodes, memory full \n");
+    return NULL;
+  }
+
+  hts->next_new_node = next_new_node + 1;
+  return hts->node_arr[next_new_node];
+}
+
 /*---------------------------------------------------------------------------*/
 // Try lowering period?
 #define SLOT_TIME RTIMER_SECOND/80    // 10 HZ, 0.1s
@@ -243,17 +257,16 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
   // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  // node_t *n = (node_t *) get(ht->id_table, sender_id);
-  // print_node(n);
-  // if (n == NULL) {
-  //   node_t *new_node = (node_t *)malloc(sizeof(node_t));
-  //   new_node->id = received_packet.src_id;
-  //   new_node->new_state_first_timing = -1;
-  //   new_node->last_seen_timing = -1;
-  //   new_node->is_absent = true;
-  //   n = new_node;
-  // }
-  // print_node(n);
+  node_t *n = (node_t *) get(hts->id_table, sender_id);
+  if (n == NULL) {
+    node_t *new_node = get_new_node(hts);
+    new_node->id = received_packet.src_id;
+    new_node->new_state_first_timing = received_time;
+    new_node->last_seen_timing = received_time;
+    new_node->is_absent = true;
+    n = new_node;
+  }
+  print_node(n);
 
   leds_off(LEDS_GREEN);
 }
@@ -349,13 +362,13 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
   data_packet.src_id = node_id;
   data_packet.seq = 0;
 
-  memb_init(&ht_memb);
+  memb_init(&hts_memb);
   memb_init(&id_table_memb);
   memb_init(&time_table_memb);
   memb_init(&node_arr_memb);
 
-  ht = memb_alloc(&ht_memb);
-  create(ht);
+  hts = memb_alloc(&hts_memb);
+  create(hts);
 
   // Start sender in one millisecond.
   rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1, (rtimer_callback_t)sender_scheduler, NULL);
