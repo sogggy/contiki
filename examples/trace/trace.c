@@ -19,9 +19,9 @@
 #include "powertrace.h"
 #endif
 
-#define INITIAL_CAPACITY 2
+#define INITIAL_CAPACITY 4
 #define INVALID_TUPLE	(long)-1
-#define MAX_NODES 2
+#define MAX_NODES 4
 
 struct hash_item {
   long tuple_id;
@@ -356,25 +356,6 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   ht = memb_alloc(&ht_memb);
   create(ht);
-
-  char* test1 = "test1";
-  insert(ht->id_table, (void *)test1, (long) 5);
-  char* val = get(ht->id_table, (long) 5);
-  printf("Value1 is:  %s\n", val);
-
-  char* test2 = "test2";
-  insert(ht->id_table, (void *)test2, (long) 13);
-  val = get(ht->id_table, (long) 13);
-  printf("Value2 is:  %s\n", val);
-
-  char* test3 = "test3";
-  insert(ht->id_table, (void *)test3, (long) 21);
-  val = get(ht->id_table, (long) 21);
-
-  delete(ht->id_table, (long) 5);
-  printf("Value is %s\n", (char*) get(ht->id_table, (long) 5));
-  delete(ht->id_table, (long) 13);
-  printf("Value is %s\n", (char*) get(ht->id_table, (long) 13));
 
   // Start sender in one millisecond.
   rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1, (rtimer_callback_t)sender_scheduler, NULL);
