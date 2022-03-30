@@ -20,9 +20,7 @@
 #endif
 
 #define INITIAL_CAPACITY 16
-
-typedef uint32_t tuple_id_t;
-#define INVALID_TUPLE	(tuple_id_t)-1
+#define INVALID_TUPLE	(long)-1
 
 struct hash_item {
   long tuple_id;
@@ -69,6 +67,8 @@ create(hts_t *ht)
   for(i = 0; i < INITIAL_CAPACITY; i++) {
     hash_map1[i]->tuple_id = INVALID_TUPLE;
     hash_map2[i]->tuple_id = INVALID_TUPLE;
+    hash_map1[i]->value = NULL;
+    hash_map2[i]->value = NULL;
   }
 
   ht->id_table = hash_map1;
@@ -117,6 +117,7 @@ delete(hash_map_t *hash_map, long tuple_id)
   // }
 
   hash_map[hash_value]->tuple_id = INVALID_TUPLE;
+  hash_map[hash_value]->value = NULL;
   return ;
 }
 
@@ -139,10 +140,25 @@ static data_packet_struct received_packet;
 static data_packet_struct data_packet;
 unsigned long curr_timestamp;
 
+unsigned long current_time;
+unsigned long sender_id;
+
 /*---------------------------------------------------------------------------*/
 PROCESS(cc2650_nbr_discovery_process, "cc2650 neighbour discovery process");
 AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 /*---------------------------------------------------------------------------*/
+
+struct node {
+  long id;
+  bool is_absent;
+  long new_state_first_timing;
+  long last_seen_timing;
+};
+typedef struct node node_t;
+
+#define DETECT_SECONDS 15
+#define ABSENT_SECONDS 30
+#define RSSI_THRESHOLD -65 //less than means present, more than is absent
 
 static bool is_active(int slot) {
   return slot % P1 == 0 || slot % P2 == 0;
@@ -153,8 +169,10 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
 {
   leds_on(LEDS_GREEN);
   memcpy(&received_packet, packetbuf_dataptr(), sizeof(data_packet_struct));
+  current_time = clock_time();
+  sender_id = received_packet.src_id;
   signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  printf("RSSI: %d\n", rssi);
+  printf("RSSI is %d, current_time is %lu, sender_id is %lu\n", rssi, current_time, sender_id);
 
   printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
@@ -244,12 +262,12 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
   ht = memb_alloc(&ht_memb);
   create(ht);
 
-  char* test = "test";
-  insert(ht->id_table, (void *)test, (long) 5);
-  char* val = get(ht->id_table, (long) 5);
-  printf("Value is:  %s", val);
-  delete(ht->id_table, (long) 5);
-  printf("Value is %s", (char*) get(ht->id_table, (long) 5));
+  // char* test = "test";
+  // insert(ht->id_table, (void *)test, (long) 5);
+  // char* val = get(ht->id_table, (long) 5);
+  // printf("Value is:  %s\n", val);
+  // delete(ht->id_table, (long) 5);
+  // printf("Value is %s\n", (char*) get(ht->id_table, (long) 5));
 
   // radio off
   NETSTACK_RADIO.off();
