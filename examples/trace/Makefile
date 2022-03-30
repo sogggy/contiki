@@ -1,4 +1,5 @@
 DEFINES+=PROJECT_CONF_H=\"project-conf.h\"
+DEFINES+=ATTRIBUTE_H=\"attribute.h\"
 CONTIKI_PROJECT = trace
 APPS+=powertrace
 all: $(CONTIKI_PROJECT)

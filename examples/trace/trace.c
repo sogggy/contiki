@@ -10,6 +10,7 @@
 #include "core/net/rime/rime.h"
 #include "dev/serial-line.h"
 #include "dev/uart1.h"
+#include "lib/memb.h"
 #include "node-id.h"
 #include "defs_and_types.h"
 #include "net/netstack.h"
@@ -18,165 +19,105 @@
 #include "powertrace.h"
 #endif
 
-void *calloc (size_t nm, size_t es){
-  return malloc(nm*es);
-}
-
-typedef struct ht ht;
-static void* ht_get(ht* table, const unsigned long key);
-static const unsigned long ht_set(ht* table, const unsigned long key, void* value);
-static size_t ht_length(ht* table);
-
-typedef struct {
-  unsigned long key;  // key is NULL if this slot is empty
-  void* value;
-} ht_entry;
-
-struct ht {
-  ht_entry* entries;  // hash slots
-  size_t capacity;    // size of _entries array
-  size_t length;      // number of items in hash table
-};
-
 #define INITIAL_CAPACITY 16
 
-static ht* ht_create(void) {
-  // Allocate space for hash table struct.
-  ht* table = malloc(sizeof(ht));
-  if (table == NULL) {
-    return NULL;
-  }
-  table->length = 0;
-  table->capacity = INITIAL_CAPACITY;
+typedef uint32_t tuple_id_t;
+#define INVALID_TUPLE	(tuple_id_t)-1
 
-  // Allocate (zero'd) space for entry buckets.
-  table->entries = calloc(table->capacity, sizeof(ht_entry));
-  static int i = 0;
-  for (i = 0; i < table->capacity; i++) {
-    table->entries[i].key = -1;
-  }
+struct hash_item {
+  long tuple_id;
+  void* value;
+};
+typedef struct hash_item hash_item_t;
+typedef hash_item_t hash_map_t[INITIAL_CAPACITY];
 
-  if (table->entries == NULL) {
-    free(table); // error, free table before we return!
-    return NULL;
-  }
-  return table;
+struct hts {
+  hash_map_t *id_table;
+  hash_map_t *time_table;
+};
+typedef struct hts hts_t;
+
+static void create(hts_t *ht);
+static void destroy(hts_t *ht);
+static void insert(hash_map_t *hash_map, void *, long);
+static void delete(hash_map_t *hash_map, long);
+
+MEMB(ht_memb, hts_t, 1);
+MEMB(id_table_memb, hash_map_t, 1);
+MEMB(time_table_memb, hash_map_t, 1);
+
+static unsigned calculate_hash(long value) {
+  return (uint16_t) (value % INITIAL_CAPACITY);
 }
 
-static void* ht_get(ht* table, const unsigned long key) {
-  // AND hash with capacity-1 to ensure it's within entries array.
-  uint64_t hash = (uint64_t) key;
-  size_t index = (size_t)(hash & (uint64_t)(table->capacity - 1));
+static void
+create(hts_t *ht)
+{
+  int i;
+  hash_map_t *hash_map1;
+  hash_map_t *hash_map2;
 
-  // Loop till we find an empty entry.
-  while (table->entries[index].key != 0) { //change to -1
-    if (table->entries[index].key == key) {
-      // Found key, return value.
-      return table->entries[index].value;
-    }
-    // Key wasn't in this slot, move to next (linear probing).
-    index++;
-    if (index >= table->capacity) {
-      // At end of entries array, wrap around.
-      index = 0;
-    }
+  printf("Creating hash maps\n");
+
+  hash_map1 = memb_alloc(&id_table_memb);
+  hash_map2 = memb_alloc(&time_table_memb);
+
+  if(hash_map1 == NULL || hash_map2 == NULL) {
+    printf("Error creating hash maps 1 or 2. \n");
   }
-  return NULL;
+
+  for(i = 0; i < INITIAL_CAPACITY; i++) {
+    hash_map1[i]->tuple_id = INVALID_TUPLE;
+    hash_map2[i]->tuple_id = INVALID_TUPLE;
+  }
+
+  ht->id_table = hash_map1;
+  ht->time_table = hash_map2;
+
+  return ;
 }
 
-static const unsigned long ht_set_entry(ht_entry* entries, size_t capacity,
-        const unsigned long key, void* value, size_t* plength) {
-  // AND hash with capacity-1 to ensure it's within entries array.
-  uint64_t hash = (uint64_t) key;
-  size_t index = (size_t)(hash & (uint64_t)(capacity - 1));
+static void
+destroy(hts_t *ht)
+{
+  // didnt auto fill here
+  memb_free(&id_table_memb, ht->id_table);
+  memb_free(&time_table_memb, ht->time_table);
 
-  // Loop till we find an empty entry.
-  while (entries[index].key != -1) {
-    if (entries[index].key == key) {
-      // Found key (it already exists), update value.
-      entries[index].value = value;
-      return entries[index].key;
-    }
-    // Key wasn't in this slot, move to next (linear probing).
-    index++;
-    if (index >= capacity) {
-      // At end of entries array, wrap around.
-      index = 0;
-    }
-  }
-
-  // Didn't find key, allocate+copy if needed, then insert it.
-  if (plength != NULL) {
-    if (key == -1) {
-      return -1;
-    }
-    (*plength)++;
-  }
-  entries[index].key = (unsigned long)key;
-  entries[index].value = value;
-  return key;
+  return ;
 }
 
-// Expand hash table to twice its current size. Return true on success,
-// false if out of memory.
-static bool ht_expand(ht* table) {
-  // Allocate new entries array.
-  size_t new_capacity = table->capacity * 2;
-  if (new_capacity < table->capacity) {
-    return false;  // overflow (capacity would be too big)
-  }
-  ht_entry* new_entries = calloc(new_capacity, sizeof(ht_entry));
-  if (new_entries == NULL) {
-    return false;
-  }
+static void
+insert(hash_map_t *hash_map, void *value, long tuple_id)
+{
+  uint16_t hash_value;
+  hash_value = calculate_hash(tuple_id);
+  hash_map[hash_value]->tuple_id = tuple_id;
+  hash_map[hash_value]->value = value;
 
-  // Iterate entries, move all non-empty ones to new table's entries.
-  static int i = 0;
-  for (i = 0; i < table->capacity; i++) {
-    ht_entry entry = table->entries[i];
-    if (entry.key != -1) {
-      ht_set_entry(new_entries, new_capacity, entry.key,
-                    entry.value, NULL);
-    }
-  }
+  // PRINTF("Inserted value %ld into the hash table\n", value);
 
-  // Free old entries array and update this table's details.
-  free(table->entries);
-  table->entries = new_entries;
-  table->capacity = new_capacity;
-  return true;
+  return ;
 }
 
-static const unsigned long ht_set(ht* table, const unsigned long key, void* value) {
-  assert(value != NULL);
-  if (value == NULL) {
-    return -1;
-  }
-
-  // If length will exceed half of current capacity, expand it.
-  if (table->length >= table->capacity / 2) {
-    if (!ht_expand(table)) {
-      return -1;
-    }
-  }
-
-  // Set entry and update length.
-  return ht_set_entry(table->entries, table->capacity, key, value,
-                      &table->length);
+static void * 
+get(hash_map_t *hash_map, long tuple_id)
+{
+  uint16_t hash_value = calculate_hash(tuple_id);
+  return hash_map[hash_value]->value;
 }
 
-static void ht_delete(ht *table, unsigned long key) {
-  static int i = 0;
-  for (i = 0; i < table->capacity; i++) {
-    if (table->entries[i].key == key) {
-      free((void *) table->entries[i].value);
-      return ;
-    }
-  }
-}
+static void
+delete(hash_map_t *hash_map, long tuple_id)
+{
+  uint16_t hash_value = calculate_hash(tuple_id);
+  // if(memcmp(&hash_map[hash_value]->tuple_id, tuple_id, sizeof(tuple_id)) != 0) {
+  //   printf("Something went wrong deleting tuple\n");
+  //   return ;
+  // }
 
-static size_t ht_length(ht* table) {
-  return table->length;
+  hash_map[hash_value]->tuple_id = INVALID_TUPLE;
+  return ;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -193,8 +134,6 @@ static size_t ht_length(ht* table) {
 // sender timer
 static struct rtimer rt;
 static struct pt pt;
-
-static struct rtimer rt2;
 /*---------------------------------------------------------------------------*/
 static data_packet_struct received_packet;
 static data_packet_struct data_packet;
@@ -205,88 +144,22 @@ PROCESS(cc2650_nbr_discovery_process, "cc2650 neighbour discovery process");
 AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 /*---------------------------------------------------------------------------*/
 
-typedef struct {
-  bool is_absent;
-  unsigned long new_state_first_timing;
-  unsigned long last_seen_timing;
-} node;
-
-#define DETECT_SECONDS 15
-#define ABSENT_SECONDS 30
-#define RSSI_THRESHOLD -65 //less than means present, more than is absent
-
-static ht* id_table;
-static ht* time_table;
-
-// state
-// bool isAbsent = true;
-// unsigned long new_state_first_timing = -1;
-static unsigned long current_time;
-static unsigned long sender_id;
-
 static bool is_active(int slot) {
   return slot % P1 == 0 || slot % P2 == 0;
-}
-
-static void insert_into_timetable(ht *time_table, long key, void *value) {
-  node *n = (node *)value;
-  static int i = 0;
-  if (ht_get(time_table, key) == NULL) {
-    node *nodes[INITIAL_CAPACITY];
-    for (i = 0; i < INITIAL_CAPACITY; i++) {
-      nodes[i] = NULL;
-    }
-    node **nodes_ptr = nodes;
-    ht_set(time_table, key, (void *)nodes_ptr);
-    nodes[0] = n;
-    return ;
-  }
-
-  //pointer to array of pointers - how do i cast properly
-  node **nodes = ((node **)ht_get(time_table, key));
-  static int j = 0;
-  for (j = 0; j < INITIAL_CAPACITY; j++) {
-    if (nodes[j] == NULL) {
-      nodes[j] = n;
-      return ;
-    }
-  }
 }
 
 static void
 broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
 {
-  signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
-  current_time = clock_time();
   leds_on(LEDS_GREEN);
   memcpy(&received_packet, packetbuf_dataptr(), sizeof(data_packet_struct));
-  sender_id = received_packet.src_id;
+  signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
+  printf("RSSI: %d\n", rssi);
 
-  node *n = (node *) ht_get(id_table, sender_id);
-  if (n == NULL) {
-    node *new_node = (node *) malloc(sizeof(node));
-    new_node->is_absent = false;
-    new_node->new_state_first_timing = -1;
-    new_node->last_seen_timing = -1;
-    ht_set(id_table, sender_id, new_node);
-    n = new_node; //check if this is correct
-  }
+  printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  if (n->is_absent && rssi <= RSSI_THRESHOLD) {
-    if (n->new_state_first_timing == -1) {
-      n->new_state_first_timing = current_time;
-      insert_into_timetable(time_table, (long) (n->new_state_first_timing / CLOCK_SECOND), (void *) n);
-    }
-    n->last_seen_timing = current_time;
-
-    if ((current_time / CLOCK_SECOND) - (n->new_state_first_timing / CLOCK_SECOND) >= DETECT_SECONDS) {
-      n->is_absent = false;
-      n->new_state_first_timing = -1;
-      printf("%ld DETECT %lu", n->new_state_first_timing / CLOCK_SECOND, received_packet.src_id);
-    }
-  }
+  printf("Received packet from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   leds_off(LEDS_GREEN);
-  // printf("Received packet from node %lu with sequence number %lu and timestamp %3lu.%03lu, RSSI: %d\n", received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND, (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI));
 }
 static const struct broadcast_callbacks broadcast_call = {broadcast_recv};
 static struct broadcast_conn broadcast;
@@ -339,15 +212,6 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
   
   PT_END(&pt);
 }
-
-void check_proximities() {
-  // every 1 second, check the time_table and id_table. 
-  // need to think about how to check the ids that have been discovered, but 'left' before the 15 second mark. check last_seen_timing
-  // check time table, if there are any keys = current_time - 30, output and delete them
-  // iterate through id table, if we find any isAbsent but last seen is more than 1 second, then we remove those. 
-  rtimer_set(&rt2, RTIMER_NOW() + RTIMER_SECOND, 0, (rtimer_callback_t) check_proximities, NULL);
-}
-
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 {
@@ -371,9 +235,21 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   printf("CC2650 neighbour discovery\n");
   printf("Node %d will be sending packet of size %d Bytes\n", node_id, (int)sizeof(data_packet_struct));
+  hts_t *ht;
 
-  id_table = ht_create();
-  time_table = ht_create();
+  memb_init(&ht_memb);
+  memb_init(&id_table_memb);
+  memb_init(&time_table_memb);
+
+  ht = memb_alloc(&ht_memb);
+  create(ht);
+
+  char* test = "test";
+  insert(ht->id_table, (void *)test, (long) 5);
+  char* val = get(ht->id_table, (long) 5);
+  printf("Value is:  %s", val);
+  delete(ht->id_table, (long) 5);
+  printf("Value is %s", (char*) get(ht->id_table, (long) 5));
 
   // radio off
   NETSTACK_RADIO.off();
@@ -384,7 +260,7 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   // Start sender in one millisecond.
   rtimer_set(&rt, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1, (rtimer_callback_t)sender_scheduler, NULL);
-  rtimer_set(&rt2, RTIMER_NOW() + (RTIMER_SECOND / 1000), 1, (rtimer_callback_t) check_proximities, NULL);
+
   PROCESS_END();
 }
 /*---------------------------------------------------------------------------*/
