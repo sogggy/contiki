@@ -218,7 +218,7 @@ static node_t *get_new_node(hts_t *hts) {
 /*---------------------------------------------------------------------------*/
 // Try lowering period?
 #define SLOT_TIME RTIMER_SECOND/80    // 10 HZ, 0.1s
-#define SLOT_DIM 27
+#define SLOT_DIM 8
 /*---------------------------------------------------------------------------*/
 // sender timer
 static struct rtimer rt;
@@ -257,16 +257,27 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
   // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  node_t *n = (node_t *) get(hts->id_table, sender_id);
-  if (n == NULL) {
-    node_t *new_node = get_new_node(hts);
-    new_node->id = received_packet.src_id;
-    new_node->new_state_first_timing = received_time;
-    new_node->last_seen_timing = received_time;
-    new_node->is_absent = true;
-    n = new_node;
+  if (rssi <= RSSI_THRESHOLD) {
+    node_t *n = (node_t *) get(hts->id_table, sender_id);
+    if (n == NULL) {
+      node_t *new_node = get_new_node(hts);
+      new_node->id = received_packet.src_id;
+      new_node->new_state_first_timing = received_time;
+      new_node->last_seen_timing = received_time;
+      new_node->is_absent = true;
+      n = new_node;
+      insert(hts->id_table, (void *)n, sender_id);
+    }
+    print_node(n);
+    n->last_seen_timing = received_time;
+
+    if ((received_time / CLOCK_SECOND) - (n->new_state_first_timing / CLOCK_SECOND) >= DETECT_SECONDS) {
+      n->is_absent = false;
+      n->last_seen_timing = received_time;
+      n->new_state_first_timing = INVALID_TUPLE; // if eventually this node is not found, then update this value
+      printf("%ld DETECT %lu", n->new_state_first_timing / CLOCK_SECOND, received_packet.src_id);
+    }
   }
-  print_node(n);
 
   leds_off(LEDS_GREEN);
 }
