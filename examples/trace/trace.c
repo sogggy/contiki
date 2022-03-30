@@ -19,9 +19,9 @@
 #include "powertrace.h"
 #endif
 
-#define INITIAL_CAPACITY 16
+#define INITIAL_CAPACITY 2
 #define INVALID_TUPLE	(long)-1
-#define MAX_NODES 8
+#define MAX_NODES 2
 
 struct hash_item {
   long tuple_id;
@@ -126,10 +126,26 @@ insert(hash_map_t *hash_map, void *value, long tuple_id)
 {
   uint16_t hash_value;
   hash_value = calculate_hash(tuple_id);
+  if (hash_map[hash_value]->tuple_id == INVALID_TUPLE || 
+                hash_map[hash_value]->tuple_id == tuple_id) {
+    hash_map[hash_value]->tuple_id = tuple_id;
+    hash_map[hash_value]->value = value;
+  }
+  
+  //linearly probe for slots.
+  int i;
+  while (hash_map[hash_value]->tuple_id !== INVALID_TUPLE && i < INITIAL_CAPACITY) {
+    hash_value = (hash_value + 1) % INITIAL_CAPACITY;
+    i++;
+  }
+
+  if (hash_map[hash_value]->tuple_id !== INVALID_TUPLE) {
+    printf("Hashmap is full. Insertion failed. \n");
+    return;
+  }
+
   hash_map[hash_value]->tuple_id = tuple_id;
   hash_map[hash_value]->value = value;
-
-  // PRINTF("Inserted value %ld into the hash table\n", value);
 
   return ;
 }
@@ -138,6 +154,22 @@ static void *
 get(hash_map_t *hash_map, long tuple_id)
 {
   uint16_t hash_value = calculate_hash(tuple_id);
+  if (hash_map[hash_value]->tuple_id == tuple_id) {
+    return hash_map[hash_value]->value;
+  }
+
+  //linearly probe
+  int i;
+  while (hash_map[hash_value]->tuple_id !== tuple_id && i < INITIAL_CAPACITY) {
+    hash_value = (hash_value + 1) % INITIAL_CAPACITY;
+    i++;
+  }
+
+  if (hash_map[hash_value]->tuple_id !== tuple_id) {
+    printf("Key %lu not found in Hashmap. Get failed. \n", tuple_id);
+    return;
+  }
+
   return hash_map[hash_value]->value;
 }
 
@@ -145,14 +177,26 @@ static void
 delete(hash_map_t *hash_map, long tuple_id)
 {
   uint16_t hash_value = calculate_hash(tuple_id);
-  // if(memcmp(&hash_map[hash_value]->tuple_id, tuple_id, sizeof(tuple_id)) != 0) {
-  //   printf("Something went wrong deleting tuple\n");
-  //   return ;
-  // }
+  
+  if (hash_map[hash_value]->tuple_id == tuple_id) {
+    hash_map[hash_value]->tuple_id = INVALID_TUPLE;
+    hash_map[hash_value]->value = NULL;
+    return ;
+  }
+
+  //linearly probe
+  int i;
+  while (hash_map[hash_value]->tuple_id !== tuple_id && i < INITIAL_CAPACITY) {
+    hash_value = (hash_value + 1) % INITIAL_CAPACITY;
+    i++;
+  }
+
+  if (hash_map[hash_value] !== tuple_id) {
+    printf("Key %lu not found in Hashmap. Delete failed. \n", tuple_id);
+  }
 
   hash_map[hash_value]->tuple_id = INVALID_TUPLE;
   hash_map[hash_value]->value = NULL;
-  return ;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -291,12 +335,24 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
   printf("CC2650 neighbour discovery\n");
   printf("Node %d will be sending packet of size %d Bytes\n", node_id, (int)sizeof(data_packet_struct));
 
-  // char* test = "test";
-  // insert(ht->id_table, (void *)test, (long) 5);
-  // char* val = get(ht->id_table, (long) 5);
-  // printf("Value is:  %s\n", val);
-  // delete(ht->id_table, (long) 5);
-  // printf("Value is %s\n", (char*) get(ht->id_table, (long) 5));
+  char* test = "test1";
+  insert(ht->id_table, (void *)test, (long) 5);
+  char* val = get(ht->id_table, (long) 5);
+  printf("Value is:  %s\n", val);
+
+  char* test = "test2";
+  insert(ht->id_table, (void *)test, (long) 13);
+  char* val = get(ht->id_table, (long) 13);
+  printf("Value is:  %s\n", val);
+
+  char* test = "test3";
+  insert(ht->id_table, (void *)test, (long) 21);
+  char* val = get(ht->id_table, (long) 21);
+
+  delete(ht->id_table, (long) 5);
+  printf("Value is %s\n", (char*) get(ht->id_table, (long) 5));
+  delete(ht->id_table, (long) 13);
+  printf("Value is %s\n", (char*) get(ht->id_table, (long) 13));
 
   // radio off
   NETSTACK_RADIO.off();
