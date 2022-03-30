@@ -157,8 +157,14 @@ delete(hash_map_t *hash_map, long tuple_id)
 
 /*---------------------------------------------------------------------------*/
 // Try lowering period?
-#define SLOT_TIME RTIMER_SECOND/80    // 10 HZ, 0.1s
-#define SLOT_DIM 27
+#define SLOT_TIME RTIMER_SECOND/10    // 10 HZ, 0.1s
+#define P1 11
+#define P2 13
+/*---------------------------------------------------------------------------*/
+// #define SLEEP_CYCLE  9        	      // 0 for never sleep
+// #define SLEEP_SLOT RTIMER_SECOND/10   // sleep slot should not be too large to prevent overflow
+/*---------------------------------------------------------------------------*/
+// duty cycle = WAKE_TIME / (WAKE_TIME + SLEEP_SLOT * SLEEP_CYCLE)
 /*---------------------------------------------------------------------------*/
 // sender timer
 static struct rtimer rt;
@@ -167,9 +173,6 @@ static struct pt pt;
 static data_packet_struct received_packet;
 static data_packet_struct data_packet;
 unsigned long curr_timestamp;
-
-static int row;
-static int col;
 
 unsigned long received_time;
 unsigned long sender_id;
@@ -184,8 +187,9 @@ AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 #define RSSI_THRESHOLD -65 //less than means present, more than is absent
 
 static bool is_active(int slot) {
-  return slot / SLOT_DIM == row || slot % SLOT_DIM == col;
+  return slot % P1 == 0 || slot % P2 == 0;
 }
+
 static void
 broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
 {
@@ -216,7 +220,7 @@ static struct broadcast_conn broadcast;
 /*---------------------------------------------------------------------------*/
 char sender_scheduler(struct rtimer *t, void *ptr) {
   static uint16_t i = 0;
-  static int slot=0;
+  static unsigned long slot=0;
   PT_BEGIN(&pt);
 
   curr_timestamp = clock_time(); 
@@ -237,7 +241,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
         curr_timestamp = clock_time();
         data_packet.timestamp = curr_timestamp;
 
-        printf("Slot %d: Send seq# %lu  @ %8lu ticks   %3lu.%03lu\n", slot, data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
+        printf("Slot %lu: Send seq# %lu  @ %8lu ticks   %3lu.%03lu\n", slot, data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
         packetbuf_copyfrom(&data_packet, (int)sizeof(data_packet_struct));
         broadcast_send(&broadcast);
@@ -246,13 +250,8 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
         if (i == (NUM_SEND - 1)) {
           // At the end of current slot and next slot not active
           NETSTACK_RADIO.off();
-        } else if (is_active((slot + 1) % (SLOT_DIM * SLOT_DIM))) {
-          // Next slot is active
-          rtimer_set(t, RTIMER_TIME(t) + SLOT_TIME, 1, (rtimer_callback_t)sender_scheduler, ptr);
-          PT_YIELD(&pt);
-          break;
+
         } else {
-          // Next slot is not active
           rtimer_set(t, RTIMER_TIME(t) + SLOT_TIME, 1, (rtimer_callback_t)sender_scheduler, ptr);
           PT_YIELD(&pt);
         }
@@ -262,7 +261,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
       PT_YIELD(&pt);
     }
 
-    slot = (slot + 1) % (SLOT_DIM * SLOT_DIM);
+    slot = slot + 1;
   }
   
   PT_END(&pt);
@@ -300,11 +299,6 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   // radio off
   NETSTACK_RADIO.off();
-
-  // initialize row and col
-  row = random_rand() % SLOT_DIM;
-  col = random_rand() % SLOT_DIM;
-  printf("row: %d, col: %d\n", row, col);
 
   // initialize data packet
   data_packet.src_id = node_id;
