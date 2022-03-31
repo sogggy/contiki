@@ -63,7 +63,7 @@ static void print_node(node_t *n) {
     return;
   }
 
-  printf("n id is %lu, is_nearby: %d, new_state_first_timing: %lu, last_seen_timing: %lu\n", n->id, n->is_nearby, n->new_state_first_timing, n->last_seen_timing);
+  printf("n id is %ld, is_nearby: %d, new_state_first_timing: %ld, last_seen_timing: %ld\n", n->id, n->is_nearby, n->new_state_first_timing, n->last_seen_timing);
 }
 
 static unsigned calculate_hash(long value) {
@@ -200,6 +200,8 @@ static node_t *get_new_node(hts_t *hts) {
 }
 
 static void reset_node_state(node_t *node) {
+  printf("Resetting node's state\n");
+  print_node(node);
   node->is_nearby = false;
   node->last_seen_timing = INVALID_TUPLE;
   node->new_state_first_timing = INVALID_TUPLE;
@@ -245,31 +247,33 @@ static bool is_active(int slot) {
   return slot / SLOT_DIM == row || slot % SLOT_DIM == col;
 }
 
-static void check_nodes(int slot) {
-  // half the time, do checks
-  if (slot % ((SLOT_DIM * SLOT_DIM) / 2) == 0) {
-    int j;
-    for (j = 0; j < MAX_NODES; j++) {
-      // is a unassigned node or resetted node
-      node_t *node = hts->node_arr[j];
-      // print_node(n)
-      if (node->id == INVALID_TUPLE || (node->last_seen_timing == INVALID_TUPLE && node->new_state_first_timing == INVALID_TUPLE)) {
-        continue;
-      }
+static void check_nodes(int slot, int curr_timestamp_seconds) {
+  // check every ~1s
+  if (slot % (SLOT_DIM * SLOT_DIM) != 10) {
+    return ;
+  }
+
+  int j;
+  for (j = 0; j < MAX_NODES; j++) {
+    // is a unassigned node or resetted node
+    node_t *node = hts->node_arr[j];
+    // print_node(n)
+    if (node->id == INVALID_TUPLE || (node->last_seen_timing == INVALID_TUPLE && node->new_state_first_timing == INVALID_TUPLE)) {
+      continue;
+    }
 
 
-      if (node->is_nearby == false && curr_timestamp_seconds - node->last_seen_timing >= 3) {
-        // for nodes that were seen before and still considered absent, 
-        // if the current time is more than the last_seen_timing by more than 3 seconds, 
-        // we reset that node's state.
-        reset_node_state(node);
-      } else if (node->is_nearby && (curr_timestamp_seconds - node->last_seen_timing >= ABSENT_SECONDS)) {
-        // for nodes that are already considered present
-        // and the current time is more than last_seen_timing by more than 30 seconds,
-        // declare that it is absent and upgrade node to absent.
-        printf("%ld ABSENT %lu\n", node->last_seen_timing, node->id);
-        reset_node_state(node);
-      }
+    if (node->is_nearby == false && curr_timestamp_seconds - node->last_seen_timing >= 3) {
+      // for nodes that were seen before and still considered absent, 
+      // if the current time is more than the last_seen_timing by more than 3 seconds, 
+      // we reset that node's state.
+      reset_node_state(node);
+    } else if (node->is_nearby && (curr_timestamp_seconds - node->last_seen_timing >= ABSENT_SECONDS)) {
+      // for nodes that are already considered present
+      // and the current time is more than last_seen_timing by more than 30 seconds,
+      // declare that it is absent and upgrade node to absent.
+      printf("%ld ABSENT %lu\n", node->last_seen_timing, node->id);
+      reset_node_state(node);
     }
   }
 }
@@ -328,8 +332,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
   PT_BEGIN(&pt);
 
   curr_timestamp = clock_time(); 
-  curr_timestamp_seconds = curr_timestamp / CLOCK_SECOND;
-  printf("Start clock %lu ticks, timestamp %3lu.%03lu\n", curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
+  // printf("Start clock %lu ticks, timestamp %3lu.%03lu\n", curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
   while(1) {
 
@@ -344,7 +347,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
         curr_timestamp = clock_time();
         data_packet.timestamp = curr_timestamp;
 
-        printf("Slot %d: Send seq# %lu  @ %8lu ticks   %3lu.%03lu\n", slot, data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
+        // printf("Slot %d: Send seq# %lu  @ %8lu ticks   %3lu.%03lu\n", slot, data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
         packetbuf_copyfrom(&data_packet, (int)sizeof(data_packet_struct));
         broadcast_send(&broadcast);
@@ -369,7 +372,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
       PT_YIELD(&pt);
     }
 
-    check_nodes(slot);
+    check_nodes(slot, clock_time() / CLOCK_SECOND);
     slot = (slot + 1) % (SLOT_DIM * SLOT_DIM);
   }
   
