@@ -20,7 +20,7 @@
 #endif
 
 #define INITIAL_CAPACITY 8
-#define INVALID_TUPLE	(long)-1
+#define INVALID_TUPLE	0
 #define MAX_NODES 8 
 
 struct hash_item {
@@ -32,7 +32,7 @@ typedef hash_item_t hash_map_t[INITIAL_CAPACITY];
 
 struct node {
   long id;
-  bool is_absent;
+  bool is_nearby;
   long new_state_first_timing;
   long last_seen_timing;
 };
@@ -63,7 +63,7 @@ static void print_node(node_t *n) {
     return;
   }
 
-  printf("n id is %lu, is_absent: %d, new_state_first_timing: %lu, last_seen_timing: %lu\n", n->id, n->is_absent, n->new_state_first_timing, n->last_seen_timing);
+  printf("n id is %lu, is_nearby: %d, new_state_first_timing: %lu, last_seen_timing: %lu\n", n->id, n->is_nearby, n->new_state_first_timing, n->last_seen_timing);
 }
 
 static unsigned calculate_hash(long value) {
@@ -77,7 +77,7 @@ create(hts_t *hts)
   hash_map_t *hash_map;
   node_arr_t *node_arr;
 
-  printf("Creating hash maps and node array\n");
+  printf("Creating hash map and node array\n");
 
   hash_map = memb_alloc(&id_table_memb);
   node_arr = memb_alloc(&node_arr_memb);
@@ -87,14 +87,6 @@ create(hts_t *hts)
   }
 
   for(i = 0; i < INITIAL_CAPACITY; i++) {
-    if (i < MAX_NODES) {
-      node_arr[i]->id = INVALID_TUPLE;
-      node_arr[i]->is_absent = true;
-      node_arr[i]->last_seen_timing = INVALID_TUPLE;
-      node_arr[i]->new_state_first_timing = INVALID_TUPLE;
-    }
-
-    hash_map[i]->tuple_id = INVALID_TUPLE;
     hash_map[i]->value = NULL;
   }
 
@@ -208,14 +200,14 @@ static node_t *get_new_node(hts_t *hts) {
 }
 
 static void reset_node_state(node_t *node) {
-  node->is_absent = true;
+  node->is_nearby = false;
   node->last_seen_timing = INVALID_TUPLE;
   node->new_state_first_timing = INVALID_TUPLE;
 }
 
 static void upgrade_node_state(node_t *node, long last_seen_timing) {
-  //upgrade to present - is_absent is false
-  node->is_absent = false;
+  //upgrade to present - is_nearby is false
+  node->is_nearby = true;
   node->last_seen_timing = last_seen_timing;
   node->new_state_first_timing = INVALID_TUPLE; 
 }
@@ -260,17 +252,18 @@ static void check_nodes(int slot) {
     for (j = 0; j < MAX_NODES; j++) {
       // is a unassigned node or resetted node
       node_t *node = hts->node_arr[j];
+      // print_node(n)
       if (node->id == INVALID_TUPLE || (node->last_seen_timing == INVALID_TUPLE && node->new_state_first_timing == INVALID_TUPLE)) {
         continue;
       }
 
 
-      if (node->is_absent && curr_timestamp_seconds - node->last_seen_timing >= 3) {
+      if (node->is_nearby == false && curr_timestamp_seconds - node->last_seen_timing >= 3) {
         // for nodes that were seen before and still considered absent, 
         // if the current time is more than the last_seen_timing by more than 3 seconds, 
         // we reset that node's state.
         reset_node_state(node);
-      } else if (node->is_absent == false && curr_timestamp_seconds - node->last_seen_timing >= ABSENT_SECONDS) {
+      } else if (node->is_nearby && (curr_timestamp_seconds - node->last_seen_timing >= ABSENT_SECONDS)) {
         // for nodes that are already considered present
         // and the current time is more than last_seen_timing by more than 30 seconds,
         // declare that it is absent and upgrade node to absent.
@@ -282,7 +275,7 @@ static void check_nodes(int slot) {
 }
 
 static void 
-update_received(int rssi, long sender_id) 
+update_received(int rssi, long sender_id, long received_time) 
 {
   if (rssi < RSSI_THRESHOLD) {
     return ;
@@ -295,17 +288,19 @@ update_received(int rssi, long sender_id)
     new_node->id = received_packet.src_id;
     new_node->new_state_first_timing = received_time;
     new_node->last_seen_timing = received_time;
-    new_node->is_absent = true;
     n = new_node;
     insert(hts->id_table, (void *)n, sender_id);
   }
   // print_node(n);
+  if (n->new_state_first_timing == INVALID_TUPLE) {
+    n->new_state_first_timing = received_time;
+  }
   n->last_seen_timing = received_time;
 
   //bypass nodes that were already detected and still present
-  if (n->new_state_first_timing != -1 && received_time - n->new_state_first_timing >= DETECT_SECONDS) {
+  if (n->new_state_first_timing != -1 && (received_time - n->new_state_first_timing >= DETECT_SECONDS)) {
+    printf("%ld DETECT %ld\n", n->new_state_first_timing, n->id);
     upgrade_node_state(n, received_time);
-    printf("%ld DETECT %lu\n", n->new_state_first_timing, n->id);
   }
 }
 
@@ -320,7 +315,7 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
   // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  update_received(rssi, sender_id);
+  update_received(rssi, sender_id, received_time);
 
   leds_off(LEDS_GREEN);
 }
@@ -337,7 +332,6 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
   printf("Start clock %lu ticks, timestamp %3lu.%03lu\n", curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
   while(1) {
-    check_nodes(slot);
 
     if (is_active(slot)) {
       // radio on  
@@ -375,6 +369,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
       PT_YIELD(&pt);
     }
 
+    check_nodes(slot);
     slot = (slot + 1) % (SLOT_DIM * SLOT_DIM);
   }
   
