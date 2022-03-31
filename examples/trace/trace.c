@@ -19,9 +19,9 @@
 #include "powertrace.h"
 #endif
 
-#define INITIAL_CAPACITY 4
+#define INITIAL_CAPACITY 8
 #define INVALID_TUPLE	(long)-1
-#define MAX_NODES 4
+#define MAX_NODES 8 
 
 struct hash_item {
   long tuple_id;
@@ -37,11 +37,10 @@ struct node {
   long last_seen_timing;
 };
 typedef struct node node_t;
-typedef node_t node_arr_t[MAX_NODES]; //map timing of 2,3,4s... to node array in time_table
+typedef node_t node_arr_t[MAX_NODES];
 
 struct hts {
   hash_map_t *id_table;
-  hash_map_t *time_table;
   node_arr_t *node_arr;
   int next_new_node;
 };
@@ -54,7 +53,6 @@ static void delete(hash_map_t *hash_map, long);
 
 MEMB(hts_memb, hts_t, 1);
 MEMB(id_table_memb, hash_map_t, 1);
-MEMB(time_table_memb, hash_map_t, 1);
 MEMB(node_arr_memb, node_arr_t, 1);
 
 hts_t *hts;
@@ -76,17 +74,15 @@ static void
 create(hts_t *hts)
 {
   int i;
-  hash_map_t *hash_map1;
-  hash_map_t *hash_map2;
+  hash_map_t *hash_map;
   node_arr_t *node_arr;
 
   printf("Creating hash maps and node array\n");
 
-  hash_map1 = memb_alloc(&id_table_memb);
-  hash_map2 = memb_alloc(&time_table_memb);
+  hash_map = memb_alloc(&id_table_memb);
   node_arr = memb_alloc(&node_arr_memb);
 
-  if(hash_map1 == NULL || hash_map2 == NULL || node_arr == NULL) {
+  if(hash_map == NULL || node_arr == NULL) {
     printf("Error creating hash maps or node array. \n");
   }
 
@@ -98,15 +94,12 @@ create(hts_t *hts)
       node_arr[i]->new_state_first_timing = INVALID_TUPLE;
     }
 
-    hash_map1[i]->tuple_id = INVALID_TUPLE;
-    hash_map1[i]->value = NULL;
-    hash_map2[i]->tuple_id = INVALID_TUPLE;
-    hash_map2[i]->value = NULL;
+    hash_map[i]->tuple_id = INVALID_TUPLE;
+    hash_map[i]->value = NULL;
   }
 
   // create nodes for the hashmap beforehand
-  hts->id_table = hash_map1;
-  hts->time_table = hash_map2;
+  hts->id_table = hash_map;
   hts->node_arr = node_arr;
   hts->next_new_node = 0;
 
@@ -118,7 +111,6 @@ destroy(hts_t *hts)
 {
   // didnt auto fill here
   memb_free(&id_table_memb, hts->id_table);
-  memb_free(&time_table_memb, hts->time_table);
   memb_free(&node_arr_memb, hts->node_arr);
   memb_free(&hts_memb, hts);
   return ;
@@ -260,6 +252,63 @@ AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 static bool is_active(int slot) {
   return slot / SLOT_DIM == row || slot % SLOT_DIM == col;
 }
+
+static void check_nodes(int slot) {
+  // half the time, do checks
+  if (slot % ((SLOT_DIM * SLOT_DIM) / 2) == 0) {
+    int j;
+    for (j = 0; j < MAX_NODES; j++) {
+      // is a unassigned node or resetted node
+      node_t *node = hts->node_arr[j];
+      if (node->id == INVALID_TUPLE || (node->last_seen_timing == INVALID_TUPLE && node->new_state_first_timing == INVALID_TUPLE)) {
+        continue;
+      }
+
+
+      if (node->is_absent && curr_timestamp_seconds - node->last_seen_timing >= 3) {
+        // for nodes that were seen before and still considered absent, 
+        // if the current time is more than the last_seen_timing by more than 3 seconds, 
+        // we reset that node's state.
+        reset_node_state(node);
+      } else if (node->is_absent == false && curr_timestamp_seconds - node->last_seen_timing >= ABSENT_SECONDS) {
+        // for nodes that are already considered present
+        // and the current time is more than last_seen_timing by more than 30 seconds,
+        // declare that it is absent and upgrade node to absent.
+        printf("%ld ABSENT %lu\n", node->last_seen_timing, node->id);
+        reset_node_state(node);
+      }
+    }
+  }
+}
+
+static void 
+update_received(int rssi, long sender_id) 
+{
+  if (rssi < RSSI_THRESHOLD) {
+    return ;
+  }
+
+  node_t *n = (node_t *) get(hts->id_table, sender_id);
+
+  if (n == NULL) {
+    node_t *new_node = get_new_node(hts);
+    new_node->id = received_packet.src_id;
+    new_node->new_state_first_timing = received_time;
+    new_node->last_seen_timing = received_time;
+    new_node->is_absent = true;
+    n = new_node;
+    insert(hts->id_table, (void *)n, sender_id);
+  }
+  // print_node(n);
+  n->last_seen_timing = received_time;
+
+  //bypass nodes that were already detected and still present
+  if (n->new_state_first_timing != -1 && received_time - n->new_state_first_timing >= DETECT_SECONDS) {
+    upgrade_node_state(n, received_time);
+    printf("%ld DETECT %lu\n", n->new_state_first_timing, n->id);
+  }
+}
+
 static void
 broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
 {
@@ -271,27 +320,7 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
   // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
   printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
-  if (rssi >= RSSI_THRESHOLD) {
-    node_t *n = (node_t *) get(hts->id_table, sender_id);
-
-    if (n == NULL) {
-      node_t *new_node = get_new_node(hts);
-      new_node->id = received_packet.src_id;
-      new_node->new_state_first_timing = received_time;
-      new_node->last_seen_timing = received_time;
-      new_node->is_absent = true;
-      n = new_node;
-      insert(hts->id_table, (void *)n, sender_id);
-    }
-    // print_node(n);
-    n->last_seen_timing = received_time;
-
-    //bypass nodes that were already detected and still present
-    if (n->new_state_first_timing != -1 && received_time - n->new_state_first_timing >= DETECT_SECONDS) {
-      upgrade_node_state(n, received_time);
-      printf("%ld DETECT %lu\n", n->new_state_first_timing, n->id);
-    }
-  }
+  update_received(rssi, sender_id);
 
   leds_off(LEDS_GREEN);
 }
@@ -308,32 +337,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
   printf("Start clock %lu ticks, timestamp %3lu.%03lu\n", curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
   while(1) {
-    // half the time, do above checks
-    if (slot % ((SLOT_DIM * SLOT_DIM) / 2) == 0) {
-      int j;
-      for (j = 0; j < MAX_NODES; j++) {
-        if (hts->node_arr[j]->id == INVALID_TUPLE) {
-          continue;
-        }
-
-        node_t *node = hts->node_arr[j];
-
-        if (node->is_absent &&
-            node->last_seen_timing != INVALID_TUPLE && 
-            curr_timestamp_seconds - node->last_seen_timing >= 1) {
-              // for nodes that were seen before and still considered absent, 
-              // if the current time is more than the last_seen_timing by more than 1 second, 
-              // we reset that node's state.
-              reset_node_state(node);
-        } else if (!node->is_absent && curr_timestamp_seconds - node->last_seen_timing >= ABSENT_SECONDS) {
-          // for nodes that are already considered present
-          // and the current time is more than last_seen_timing by more than 30 seconds,
-          // declare that it is absent and upgrade node to absent.
-          printf("%ld ABSENT %lu\n", node->last_seen_timing, node->id);
-          reset_node_state(node);
-        }
-      }
-    }
+    check_nodes(slot);
 
     if (is_active(slot)) {
       // radio on  
@@ -414,7 +418,6 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   memb_init(&hts_memb);
   memb_init(&id_table_memb);
-  memb_init(&time_table_memb);
   memb_init(&node_arr_memb);
 
   hts = memb_alloc(&hts_memb);
