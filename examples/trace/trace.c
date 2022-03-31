@@ -128,7 +128,7 @@ insert(hash_map_t *hash_map, void *value, long tuple_id)
   }
 
   if (hash_map[hash_value]->tuple_id != INVALID_TUPLE) {
-    printf("Hashmap is full. Insertion failed. \n");
+    // printf("Hashmap is full. Insertion failed. \n");
     return;
   }
 
@@ -154,7 +154,7 @@ get(hash_map_t *hash_map, long tuple_id)
   }
 
   if (hash_map[hash_value]->tuple_id != tuple_id) {
-    printf("Key %lu not found in Hashmap. Get failed. \n", tuple_id);
+    // printf("Key %lu not found in Hashmap. Get failed. \n", tuple_id);
     return NULL;
   }
 
@@ -180,7 +180,7 @@ delete(hash_map_t *hash_map, long tuple_id)
   }
 
   if (hash_map[hash_value]->tuple_id != tuple_id) {
-    printf("Key %lu not found in Hashmap. Delete failed. \n", tuple_id);
+    // printf("Key %lu not found in Hashmap. Delete failed. \n", tuple_id);
     return;
   }
 
@@ -190,21 +190,26 @@ delete(hash_map_t *hash_map, long tuple_id)
 
 static node_t *get_new_node(hts_t *hts) {
   int next_new_node = hts->next_new_node;
-  if (next_new_node >= MAX_NODES) {
-    printf("Cannot hold anymore new nodes, memory full \n");
-    return NULL;
+  int i;
+  for (i = 0; i < MAX_NODES; i++) {
+    if (hts->node_arr[next_new_node]->id == INVALID_TUPLE) {
+      hts->next_new_node = next_new_node + 1;
+      return hts->node_arr[next_new_node];
+    }
+    next_new_node = (next_new_node + 1) % MAX_NODES;
   }
 
-  hts->next_new_node = next_new_node + 1;
-  return hts->node_arr[next_new_node];
+  printf("Cannot hold anymore new nodes, memory full \n");
+  return NULL;
 }
 
 static void reset_node_state(node_t *node) {
-  printf("Resetting node's state\n");
-  print_node(node);
+  // printf("Resetting node's state\n");
+  node->id = INVALID_TUPLE;
   node->is_nearby = false;
   node->last_seen_timing = INVALID_TUPLE;
   node->new_state_first_timing = INVALID_TUPLE;
+  // print_node(node);
 }
 
 static void upgrade_node_state(node_t *node, long last_seen_timing) {
@@ -302,7 +307,7 @@ update_received(int rssi, long sender_id, long received_time)
   n->last_seen_timing = received_time;
 
   //bypass nodes that were already detected and still present
-  if (n->new_state_first_timing != -1 && (received_time - n->new_state_first_timing >= DETECT_SECONDS)) {
+  if (n->is_nearby == false && n->new_state_first_timing != -1 && (received_time - n->new_state_first_timing >= DETECT_SECONDS)) {
     printf("%ld DETECT %ld\n", n->new_state_first_timing, n->id);
     upgrade_node_state(n, received_time);
   }
@@ -317,7 +322,7 @@ broadcast_recv(struct broadcast_conn *c, const linkaddr_t *from)
   sender_id = received_packet.src_id;
   signed short rssi = (signed short)packetbuf_attr(PACKETBUF_ATTR_RSSI);
   // printf("Send seq# %lu  @ %8lu  %3lu.%03lu\n", data_packet.seq, curr_timestamp, curr_timestamp / CLOCK_SECOND, ((curr_timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
-  printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
+  // printf("Received packet with RSSI %d, from node %lu with sequence number %lu and timestamp %3lu.%03lu\n", rssi, received_packet.src_id, received_packet.seq, received_packet.timestamp / CLOCK_SECOND, ((received_packet.timestamp % CLOCK_SECOND)*1000) / CLOCK_SECOND);
 
   update_received(rssi, sender_id, received_time);
 
