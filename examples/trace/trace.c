@@ -193,8 +193,8 @@ static void upgrade_node_state(node_t *node, long last_seen_timing) {
 
 /*---------------------------------------------------------------------------*/
 // Try lowering period?
-#define SLOT_TIME RTIMER_SECOND/80    // 80 HZ, 0.0125s
-#define P1 7
+#define SLOT_TIME RTIMER_SECOND/35    // 80 HZ, 0.0125s
+#define P1 13
 #define P2 9
 /*---------------------------------------------------------------------------*/
 // sender timer
