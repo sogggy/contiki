@@ -194,8 +194,7 @@ static void upgrade_node_state(node_t *node, long last_seen_timing) {
 /*---------------------------------------------------------------------------*/
 // Try lowering period?
 #define SLOT_TIME RTIMER_SECOND/80    // 80 HZ, 0.0125s
-#define P1 7
-#define P2 9
+#define SLOT_DIM 8
 /*---------------------------------------------------------------------------*/
 // sender timer
 static struct rtimer rt;
@@ -205,6 +204,9 @@ static data_packet_struct received_packet;
 static data_packet_struct data_packet;
 unsigned long curr_timestamp;
 unsigned long curr_timestamp_seconds;
+
+static int row;
+static int col;
 
 unsigned long received_time;
 unsigned long sender_id;
@@ -219,12 +221,12 @@ AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 #define RSSI_THRESHOLD -65 //less than means present, more than is absent
 
 static bool is_active(int slot) {
-  return slot % P1 == 0 || slot % P2 == 0;
+  return slot / SLOT_DIM == row || slot % SLOT_DIM == col;
 }
 
 static void check_nodes(int slot, int curr_timestamp_seconds) {
   // check every ~1s
-  if (slot % (P1 * P2) != 10) {
+  if (slot % (SLOT_DIM * SLOT_DIM) != 10) {
     return ;
   }
 
@@ -331,8 +333,13 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
         if (i == (NUM_SEND - 1)) {
           // At the end of current slot and next slot not active
           NETSTACK_RADIO.off();
-
+        } else if (is_active((slot + 1) % (SLOT_DIM * SLOT_DIM))) {
+          // Next slot is active
+          rtimer_set(t, RTIMER_TIME(t) + SLOT_TIME, 1, (rtimer_callback_t)sender_scheduler, ptr);
+          PT_YIELD(&pt);
+          break;
         } else {
+          // Next slot is not active
           rtimer_set(t, RTIMER_TIME(t) + SLOT_TIME, 1, (rtimer_callback_t)sender_scheduler, ptr);
           PT_YIELD(&pt);
         }
@@ -343,7 +350,7 @@ char sender_scheduler(struct rtimer *t, void *ptr) {
     }
 
     check_nodes(slot, clock_time() / CLOCK_SECOND);
-    slot = slot + 1;
+    slot = (slot + 1) % (SLOT_DIM * SLOT_DIM);
   }
   
   PT_END(&pt);
@@ -374,6 +381,11 @@ PROCESS_THREAD(cc2650_nbr_discovery_process, ev, data)
 
   // radio off
   NETSTACK_RADIO.off();
+
+  // initialize row and col
+  row = random_rand() % SLOT_DIM;
+  col = random_rand() % SLOT_DIM;
+  printf("row: %d, col: %d\n", row, col);
 
   // initialize data packet
   data_packet.src_id = node_id;
