@@ -41,6 +41,7 @@ typedef struct node node_t;
 typedef node_t node_arr_t[MAX_NODES];
 
 static void initialise();
+static void delete(hash_map_t *hash_map, long);
 static void destroy();
 static void insert(hash_map_t *hash_map, void *, long);
 
@@ -132,6 +133,33 @@ insert(hash_map_t *hash_map, void *value, long tuple_id)
     return;
 }
 
+static void
+delete(hash_map_t *hash_map, long tuple_id)
+{
+  uint16_t hash_value = calculate_hash(tuple_id);
+  
+  if (hash_map[hash_value]->tuple_id == tuple_id) {
+    hash_map[hash_value]->tuple_id = INVALID_TUPLE;
+    hash_map[hash_value]->value = NULL;
+    return ;
+  }
+
+  //linearly probe
+  int i = 0;
+  while (hash_map[hash_value]->tuple_id != tuple_id && i < BUCKETS) {
+    hash_value = (hash_value + 1) % BUCKETS;
+    i = i + 1;
+  }
+
+  if (hash_map[hash_value]->tuple_id != tuple_id) {
+    printf("Key %lu not found in Hashmap. Delete failed. \n", tuple_id);
+    return;
+  }
+
+  hash_map[hash_value]->tuple_id = INVALID_TUPLE;
+  hash_map[hash_value]->value = NULL;
+}
+
 static void *
 get(hash_map_t *hash_map, long tuple_id)
 {
@@ -182,12 +210,13 @@ static void reset_node_state(node_t *node)
     node->is_nearby = false;
     node->last_seen_timing = INVALID_TUPLE;
     node->new_state_first_timing = INVALID_TUPLE;
+    delete(id_table, node->id);
     // print_node(node);
 }
 
 static void upgrade_node_state(node_t *node, long last_seen_timing)
 {
-    // upgrade to present - is_nearby is false
+    // upgrade to present - is_nearby is true
     node->is_nearby = true;
     node->last_seen_timing = last_seen_timing;
     node->new_state_first_timing = INVALID_TUPLE;
