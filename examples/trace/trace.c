@@ -27,8 +27,8 @@
 #define P1 11
 #define P2 17
 
-#define DETECT_SECONDS 3
-#define ABSENT_SECONDS 9
+#define DETECT_SECONDS 15
+#define ABSENT_SECONDS 30
 #define RSSI_THRESHOLD -65 // less than means present, more than is absent
 
 struct hash_item
@@ -215,7 +215,7 @@ static node_t *get_new_node()
 
 static void reset_node_state(node_t *node)
 {
-    printf("Resetting node's state\n");
+    // printf("Resetting node's state\n");
     delete(&id_table, node->id);
     node->id = INVALID_TUPLE;
     node->is_nearby = false;
@@ -269,7 +269,6 @@ static void check_nodes(int slot, int curr_timestamp_seconds)
         // is a unassigned node or resetted node
         node_t *node = &(node_arr[i]);
         // print_node(n)
-        // if (node->id == INVALID_TUPLE || (node->last_seen_timing == INVALID_TUPLE && node->first_seen_timing == INVALID_TUPLE))
         if (node->id == INVALID_TUPLE)
         {
             continue;
@@ -294,7 +293,7 @@ static void check_nodes(int slot, int curr_timestamp_seconds)
 }
 
 static void
-update_received(int rssi, long sender_id, long received_time)
+update_received(int rssi, long sender_id, int received_time)
 {
     if (rssi < RSSI_THRESHOLD)
     {
@@ -302,7 +301,7 @@ update_received(int rssi, long sender_id, long received_time)
     }
 
     node_t *n = (node_t *)get(&id_table, sender_id);
-
+    // print_node(n);
     if (n == NULL)
     {
         node_t *new_node = get_new_node();
@@ -312,15 +311,11 @@ update_received(int rssi, long sender_id, long received_time)
         n = new_node;
         insert(&id_table, (void *)n, sender_id);
     }
-    // printf("Node id is %d, Sender id is %d\n", n->id, sender_id);
-    // if (n->first_seen_timing == INVALID_TUPLE)
-    // {
-    //     n->first_seen_timing = received_time;
-    // }
+
     n->last_seen_timing = received_time;
 
     // bypass nodes that were already detected and still present
-    if (n->is_nearby == false && n->first_seen_timing != INVALID_TUPLE && (received_time - n->first_seen_timing >= DETECT_SECONDS))
+    if (n->is_nearby == false && (received_time - n->first_seen_timing >= DETECT_SECONDS))
     {
         printf("%ld DETECT %ld\n", n->first_seen_timing, sender_id);
         upgrade_node_state(n, received_time);
