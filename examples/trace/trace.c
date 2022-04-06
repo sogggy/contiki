@@ -22,6 +22,15 @@
 #define INVALID_TUPLE 0
 #define MAX_NODES 10
 
+// Try lowering period?
+#define SLOT_TIME RTIMER_SECOND / 1000 * 26.5 // 80 HZ, 0.0125s
+#define P1 11
+#define P2 17
+
+#define DETECT_SECONDS 3
+#define ABSENT_SECONDS 9
+#define RSSI_THRESHOLD -65 // less than means present, more than is absent
+
 struct hash_item
 {
     long tuple_id;
@@ -80,10 +89,10 @@ initialise()
     int j;
     for (j = 0; j < MAX_NODES; j++)
     {
-        node_arr[i].id = INVALID_TUPLE;
-        node_arr[i].is_nearby = false;
-        node_arr[i].last_seen_timing = INVALID_TUPLE;
-        node_arr[i].new_state_first_timing = INVALID_TUPLE;
+        node_arr[j].id = INVALID_TUPLE;
+        node_arr[j].is_nearby = false;
+        node_arr[j].last_seen_timing = INVALID_TUPLE;
+        node_arr[j].new_state_first_timing = INVALID_TUPLE;
     }
 
     next_new_node = 0;
@@ -210,7 +219,7 @@ static void reset_node_state(node_t *node)
     node->is_nearby = false;
     node->last_seen_timing = INVALID_TUPLE;
     node->new_state_first_timing = INVALID_TUPLE;
-    delete(id_table, node->id);
+    delete(&id_table, node->id);
     // print_node(node);
 }
 
@@ -222,11 +231,6 @@ static void upgrade_node_state(node_t *node, long last_seen_timing)
     node->new_state_first_timing = INVALID_TUPLE;
 }
 
-/*---------------------------------------------------------------------------*/
-// Try lowering period?
-#define SLOT_TIME RTIMER_SECOND / 1000 * 26.5 // 80 HZ, 0.0125s
-#define P1 11
-#define P2 17
 /*---------------------------------------------------------------------------*/
 // sender timer
 static struct rtimer rt;
@@ -245,10 +249,6 @@ PROCESS(cc2650_nbr_discovery_process, "cc2650 neighbour discovery process");
 AUTOSTART_PROCESSES(&cc2650_nbr_discovery_process);
 /*---------------------------------------------------------------------------*/
 
-#define DETECT_SECONDS 3
-#define ABSENT_SECONDS 9
-#define RSSI_THRESHOLD -65 // less than means present, more than is absent
-
 static bool is_active(int slot)
 {
     return slot % P1 == 0 || slot % P2 == 0;
@@ -256,7 +256,7 @@ static bool is_active(int slot)
 
 static void check_nodes(int slot, int curr_timestamp_seconds)
 {
-    // check every ~1s
+    // check every 1 round
     if (slot % (P1 * P2) != 10)
     {
         return;
@@ -299,7 +299,7 @@ update_received(int rssi, long sender_id, long received_time)
         return;
     }
 
-    node_t *n = (node_t *)get(id_table, sender_id);
+    node_t *n = (node_t *)get(&id_table, sender_id);
 
     if (n == NULL)
     {
@@ -308,7 +308,7 @@ update_received(int rssi, long sender_id, long received_time)
         new_node->new_state_first_timing = received_time;
         new_node->last_seen_timing = received_time;
         n = new_node;
-        insert(id_table, (void *)n, sender_id);
+        insert(&id_table, (void *)n, sender_id);
     }
     // printf("Node id is %d, Sender id is %d\n", n->id, sender_id);
     if (n->new_state_first_timing == INVALID_TUPLE)
