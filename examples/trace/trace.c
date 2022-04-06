@@ -43,7 +43,7 @@ struct node
 {
     long id;
     bool is_nearby;
-    long new_state_first_timing;
+    long first_seen_timing;
     long last_seen_timing;
 };
 typedef struct node node_t;
@@ -56,7 +56,7 @@ static void insert(hash_map_t *hash_map, void *, long);
 
 node_arr_t node_arr;
 hash_map_t id_table;
-int next_new_node;
+static int next_new_node;
 
 static void print_node(node_t *n)
 {
@@ -66,7 +66,7 @@ static void print_node(node_t *n)
         return;
     }
 
-    printf("n id is %ld, is_nearby: %d, new_state_first_timing: %ld, last_seen_timing: %ld\n", n->id, n->is_nearby, n->new_state_first_timing, n->last_seen_timing);
+    printf("n id is %ld, is_nearby: %d, first_seen_timing: %ld, last_seen_timing: %ld\n", n->id, n->is_nearby, n->first_seen_timing, n->last_seen_timing);
 }
 
 static unsigned calculate_hash(long value)
@@ -92,7 +92,7 @@ initialise()
         node_arr[j].id = INVALID_TUPLE;
         node_arr[j].is_nearby = false;
         node_arr[j].last_seen_timing = INVALID_TUPLE;
-        node_arr[j].new_state_first_timing = INVALID_TUPLE;
+        node_arr[j].first_seen_timing = INVALID_TUPLE;
     }
 
     next_new_node = 0;
@@ -145,7 +145,7 @@ insert(hash_map_t *hash_map, void *value, long tuple_id)
 static void
 delete(hash_map_t *hash_map, long tuple_id)
 {
-  uint16_t hash_value = calculate_hash(tuple_id);
+  int hash_value = (int) calculate_hash(tuple_id);
   
   if (hash_map[hash_value]->tuple_id == tuple_id) {
     hash_map[hash_value]->tuple_id = INVALID_TUPLE;
@@ -202,8 +202,9 @@ static node_t *get_new_node()
     {
         if (node_arr[next_new_node].id == INVALID_TUPLE)
         {
-            next_new_node = next_new_node + 1;
-            return &(node_arr[next_new_node - 1]);
+            int idx = next_new_node;
+            next_new_node = (next_new_node + 1) % MAX_NODES;
+            return &(node_arr[idx]);
         }
         next_new_node = (next_new_node + 1) % MAX_NODES;
     }
@@ -215,11 +216,11 @@ static node_t *get_new_node()
 static void reset_node_state(node_t *node)
 {
     printf("Resetting node's state\n");
+    delete(&id_table, node->id);
     node->id = INVALID_TUPLE;
     node->is_nearby = false;
     node->last_seen_timing = INVALID_TUPLE;
-    node->new_state_first_timing = INVALID_TUPLE;
-    delete(&id_table, node->id);
+    node->first_seen_timing = INVALID_TUPLE;
     // print_node(node);
 }
 
@@ -228,7 +229,7 @@ static void upgrade_node_state(node_t *node, long last_seen_timing)
     // upgrade to present - is_nearby is true
     node->is_nearby = true;
     node->last_seen_timing = last_seen_timing;
-    node->new_state_first_timing = INVALID_TUPLE;
+    node->first_seen_timing = INVALID_TUPLE;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -262,13 +263,14 @@ static void check_nodes(int slot, int curr_timestamp_seconds)
         return;
     }
 
-    int j;
-    for (j = 0; j < MAX_NODES; j++)
+    int i;
+    for (i = 0; i < MAX_NODES; i++)
     {
         // is a unassigned node or resetted node
-        node_t *node = &(node_arr[j]);
+        node_t *node = &(node_arr[i]);
         // print_node(n)
-        if (node->id == INVALID_TUPLE || (node->last_seen_timing == INVALID_TUPLE && node->new_state_first_timing == INVALID_TUPLE))
+        // if (node->id == INVALID_TUPLE || (node->last_seen_timing == INVALID_TUPLE && node->first_seen_timing == INVALID_TUPLE))
+        if (node->id == INVALID_TUPLE)
         {
             continue;
         }
@@ -305,22 +307,22 @@ update_received(int rssi, long sender_id, long received_time)
     {
         node_t *new_node = get_new_node();
         new_node->id = sender_id;
-        new_node->new_state_first_timing = received_time;
+        new_node->first_seen_timing = received_time;
         new_node->last_seen_timing = received_time;
         n = new_node;
         insert(&id_table, (void *)n, sender_id);
     }
     // printf("Node id is %d, Sender id is %d\n", n->id, sender_id);
-    if (n->new_state_first_timing == INVALID_TUPLE)
-    {
-        n->new_state_first_timing = received_time;
-    }
+    // if (n->first_seen_timing == INVALID_TUPLE)
+    // {
+    //     n->first_seen_timing = received_time;
+    // }
     n->last_seen_timing = received_time;
 
     // bypass nodes that were already detected and still present
-    if (n->is_nearby == false && n->new_state_first_timing != INVALID_TUPLE && (received_time - n->new_state_first_timing >= DETECT_SECONDS))
+    if (n->is_nearby == false && n->first_seen_timing != INVALID_TUPLE && (received_time - n->first_seen_timing >= DETECT_SECONDS))
     {
-        printf("%ld DETECT %ld\n", n->new_state_first_timing, sender_id);
+        printf("%ld DETECT %ld\n", n->first_seen_timing, sender_id);
         upgrade_node_state(n, received_time);
     }
 }
